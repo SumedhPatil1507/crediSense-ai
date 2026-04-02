@@ -1,7 +1,7 @@
 DATA_PATH = "data/loan_cleaned.csv"
 MODEL_PATH = "models/model.pkl"
+COLUMNS_PATH = "models/columns.json"
 TARGET = "Risk_Flag"
 
-# Business config
 LOAN_AMOUNT = 100000
-INTEREST_RATE = 0.2
+INTEREST = 0.2

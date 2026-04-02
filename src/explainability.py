@@ -1,13 +1,10 @@
 import shap
 
-def get_shap(pipeline, X_sample):
-
+def get_shap(pipeline, X):
     model = pipeline.named_steps['model']
     pre = pipeline.named_steps['preprocessor']
 
-    X_transformed = pre.transform(X_sample)
+    X_transformed = pre.transform(X)
 
     explainer = shap.TreeExplainer(model)
-    shap_values = explainer.shap_values(X_transformed)
-
-    return shap_values
+    return explainer.shap_values(X_transformed)

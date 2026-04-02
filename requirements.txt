@@ -2,8 +2,9 @@ streamlit
 pandas
 numpy
 scikit-learn
+lightgbm
+plotly
 matplotlib
 seaborn
-lightgbm
 shap
 joblib

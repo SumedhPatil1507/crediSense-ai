@@ -2,32 +2,24 @@ import streamlit as st
 import joblib
 import pandas as pd
 
-st.title("🤖 Credit Risk Assistant")
-
 model = joblib.load("models/model.pkl")
 
-st.write("Ask about loan risk decisions!")
+st.title("🤖 Chatbot")
 
-user_input = st.text_input("Enter applicant details (Income, Age, Experience):")
+text = st.text_input("Enter: income,age,experience")
 
-if user_input:
-    try:
-        vals = list(map(float, user_input.split(',')))
+if text:
+    vals = list(map(float, text.split(',')))
 
-        df = pd.DataFrame([{
-            "Income": vals[0],
-            "Age": vals[1],
-            "Experience": vals[2],
-            "House_Ownership": "owned"
-        }])
+    df = pd.DataFrame([{
+        "Income": vals[0],
+        "Age": vals[1],
+        "Experience": vals[2]
+    }])
 
-        prob = model.predict_proba(df)[0][1]
+    prob = model.predict_proba(df)[0][1]
 
-        if prob > 0.5:
-            st.error(f"⚠️ High Risk ({prob:.2%})")
-            st.write("Reason: Low stability or income-risk mismatch.")
-        else:
-            st.success(f"✅ Safe ({prob:.2%})")
-            st.write("Reason: Stable profile with good income.")
-    except:
-        st.warning("Enter values like: 0.5,0.3,0.2")
+    if prob > 0.5:
+        st.error("High Risk")
+    else:
+        st.success("Safe")

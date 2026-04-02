@@ -1,25 +1,30 @@
-import streamlit as st
+from app.utils import build_full_input
+from pathlib import Path
+import json
 import joblib
-import pandas as pd
+import streamlit as st
 
-model = joblib.load("models/model.pkl")
+BASE_DIR = Path(__file__).resolve().parents[2]
 
-st.title("🤖 Chatbot")
+model = joblib.load(BASE_DIR / "models/model.pkl")
+cols = json.load(open(BASE_DIR / "models/columns.json"))
 
 text = st.text_input("Enter: income,age,experience")
 
 if text:
     vals = list(map(float, text.split(',')))
 
-    df = pd.DataFrame([{
+    user_input = {
         "Income": vals[0],
         "Age": vals[1],
         "Experience": vals[2]
-    }])
+    }
+
+    df = build_full_input(user_input, cols)
 
     prob = model.predict_proba(df)[0][1]
 
     if prob > 0.5:
-        st.error("High Risk")
+        st.error("⚠️ High Risk")
     else:
-        st.success("Safe")
+        st.success("✅ Safe")

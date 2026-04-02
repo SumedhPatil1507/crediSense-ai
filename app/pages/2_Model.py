@@ -1,74 +1,75 @@
 import streamlit as st
 import joblib
 import pandas as pd
+import json
 from pathlib import Path
 
-# Paths
+# 🔥 Import helper
+from app.utils import build_full_input
+
+# --- PATH SETUP ---
 BASE_DIR = Path(__file__).resolve().parents[2]
 
 model_path = BASE_DIR / "models" / "model.pkl"
 columns_path = BASE_DIR / "models" / "columns.json"
 
+# --- LOAD MODEL ---
 model = joblib.load(model_path)
 
-# Fallback columns 
-default_cols = [
-    "Income","Age","Experience",
-    "CURRENT_JOB_YRS","CURRENT_HOUSE_YRS",
-    "House_Ownership","Married/Single",
-    "Car_Ownership","Profession",
-    "CITY","STATE","age_group",
-    "income_per_job_year","total_stability","experience_ratio"
-]
-
-# Load safely
+# --- LOAD COLUMNS ---
 try:
-    import json
     cols = json.load(open(columns_path))
 except:
-    st.warning("⚠️ Using default columns")
-    cols = default_cols
+    st.error("❌ columns.json not found")
+    st.stop()
 
+# --- UI ---
 st.title("🔍 Loan Risk Prediction")
 
-# Inputs
-income = st.slider("Income", 0.0, 1.0)
-age = st.slider("Age", 0.0, 1.0)
-exp = st.slider("Experience", 0.0, 1.0)
+st.markdown("### Enter Applicant Details")
 
-if st.button("Predict"):
+# 🔥 INPUTS 
+col1, col2 = st.columns(2)
 
-    df = pd.DataFrame(columns=cols)
-    df.loc[0] = 0
+with col1:
+    income = st.slider("Income", 0.0, 1.0, 0.5)
+    age = st.slider("Age", 0.0, 1.0, 0.3)
 
-    # Fill inputs
-    df["Income"] = income
-    df["Age"] = age
-    df["Experience"] = exp
-    df["CURRENT_JOB_YRS"] = 2
-    df["CURRENT_HOUSE_YRS"] = 3
-    df["House_Ownership"] = "owned"
-    df["Married/Single"] = "single"
-    df["Car_Ownership"] = "no"
-    df["Profession"] = "Engineer"
-    df["CITY"] = "Mumbai"
-    df["STATE"] = "Maharashtra"
-    df["age_group"] = "Middle"
+with col2:
+    exp = st.slider("Experience", 0.0, 1.0, 0.2)
 
-    # Feature engineering (IMPORTANT)
-    df["income_per_job_year"] = df["Income"] / (df["CURRENT_JOB_YRS"] + 1)
-    df["total_stability"] = df["CURRENT_JOB_YRS"] + df["CURRENT_HOUSE_YRS"]
-    df["experience_ratio"] = df["Experience"] / (df["Age"] + 1)
+# --- PREDICT ---
+if st.button("🚀 Predict Risk"):
 
+    # Build user input
+    user_input = {
+        "Income": income,
+        "Age": age,
+        "Experience": exp
+    }
+
+    # 🔥 Build FULL dataframe
+    df = build_full_input(user_input, cols)
+
+    # Predict
     prob = model.predict_proba(df)[0][1]
 
-    st.metric("Risk Probability", f"{prob:.2%}")
+    # --- OUTPUT ---
+    st.markdown("---")
+
+    col1, col2 = st.columns(2)
+
+    col1.metric("Risk Probability", f"{prob:.2%}")
+
+    decision = "Approve" if prob < 0.3 else "Review" if prob < 0.6 else "Reject"
+    col2.metric("Decision", decision)
 
     if prob > 0.5:
-        st.error("⚠️ High Risk")
+        st.error("⚠️ High Risk Applicant")
     else:
-        st.success("✅ Safe")
+        st.success("✅ Safe Applicant")
 
-    # Business logic
-    profit = (1 - prob)*20000 - prob*100000
+    # 💰 Business logic
+    loan = 100000
+    profit = (1 - prob)*20000 - prob*loan
     st.metric("Expected Profit", f"₹{profit:,.0f}")

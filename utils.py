@@ -2,7 +2,6 @@ import pandas as pd
 
 def build_full_input(user_input, columns):
 
-    # Create empty df with all required columns
     df = pd.DataFrame(columns=columns)
     df.loc[0] = 0
 
@@ -11,7 +10,7 @@ def build_full_input(user_input, columns):
         if key in df.columns:
             df[key] = value
 
-    # Default values (for missing categorical)
+    # Default values
     defaults = {
         "CURRENT_JOB_YRS": 2,
         "CURRENT_HOUSE_YRS": 3,
@@ -28,7 +27,7 @@ def build_full_input(user_input, columns):
         if col in df.columns:
             df[col] = val
 
-    # Feature engineering (MUST MATCH TRAINING)
+    # Feature engineering
     if "income_per_job_year" in df.columns:
         df["income_per_job_year"] = df["Income"] / (df["CURRENT_JOB_YRS"] + 1)
 

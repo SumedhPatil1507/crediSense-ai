@@ -2,13 +2,15 @@ import streamlit as st
 import joblib
 import pandas as pd
 import json
+import sys
 from pathlib import Path
 
-from utils import build_full_input   
-
-# Paths
 BASE_DIR = Path(__file__).resolve().parents[2]
+sys.path.append(str(BASE_DIR))
 
+from utils import build_full_input 
+
+# Load model + columns
 model = joblib.load(BASE_DIR / "models/model.pkl")
 cols = json.load(open(BASE_DIR / "models/columns.json"))
 

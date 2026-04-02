@@ -1,0 +1,17 @@
+[
+    "Income",
+    "Age",
+    "Experience",
+    "CURRENT_JOB_YRS",
+    "CURRENT_HOUSE_YRS",
+    "House_Ownership",
+    "Married/Single",
+    "Car_Ownership",
+    "Profession",
+    "CITY",
+    "STATE",
+    "age_group",
+    "income_per_job_year",
+    "total_stability",
+    "experience_ratio"
+]

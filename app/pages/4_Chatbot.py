@@ -18,12 +18,18 @@ text = st.text_input("Enter: income,age,experience")
 
 if text:
     try:
-        vals = list(map(float, text.split(',')))
+        vals = text.split(",")
+
+        if len(vals) != 3:
+            st.warning("Enter exactly 3 values: income,age,experience")
+            st.stop()
+
+        income, age, exp = map(float, vals)
 
         user_input = {
-            "Income": vals[0],
-            "Age": vals[1],
-            "Experience": vals[2]
+            "Income": income,
+            "Age": age,
+            "Experience": exp
         }
 
         df = build_full_input(user_input, cols)
@@ -35,5 +41,5 @@ if text:
         else:
             st.success(f"✅ Safe ({prob:.2%})")
 
-    except:
-        st.warning("Enter values like: 0.5,0.3,0.2")
+    except Exception as e:
+        st.error("Invalid input format. Use: 0.5,0.3,0.2")

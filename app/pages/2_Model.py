@@ -35,6 +35,8 @@ if st.button("🚀 Predict Risk"):
 
     df = build_full_input(user_input, cols)
 
+    st.write("Columns passed to model:", df.columns.tolist())
+
     prob = model.predict_proba(df)[0][1]
 
     st.metric("Risk Probability", f"{prob:.2%}")

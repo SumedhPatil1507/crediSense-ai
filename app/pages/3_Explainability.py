@@ -3,9 +3,15 @@ import joblib
 import pandas as pd
 import shap
 import matplotlib.pyplot as plt
+from pathlib import Path
+import sys
 
-model = joblib.load("models/model.pkl")
+BASE_DIR = Path(__file__).resolve().parents[2]
+sys.path.append(str(BASE_DIR))
 
+model = joblib.load(BASE_DIR / "models/model.pkl")
+
+st.set_page_config(layout="wide")
 st.title("🧠 Explainability")
 
 file = st.file_uploader("Upload CSV")
@@ -21,5 +27,9 @@ if file:
     explainer = shap.TreeExplainer(mod)
     shap_values = explainer.shap_values(X)
 
-    shap.summary_plot(shap_values, X, show=False)
-    st.pyplot(plt)
+    # For binary classification, shap_values is a list; use class 1
+    sv = shap_values[1] if isinstance(shap_values, list) else shap_values
+
+    fig, ax = plt.subplots()
+    shap.summary_plot(sv, X, show=False)
+    st.pyplot(plt.gcf())

@@ -10,7 +10,8 @@ sys.path.append(str(BASE_DIR))
 from utils import build_full_input
 
 model = joblib.load(BASE_DIR / "models/model.pkl")
-cols = json.load(open(BASE_DIR / "models/columns.json"))
+with open(BASE_DIR / "models/columns.json") as f:
+    cols = json.load(f)
 
 st.set_page_config(layout="wide")
 st.title("💳 Loan Risk Prediction")

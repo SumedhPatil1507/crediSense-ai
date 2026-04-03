@@ -23,13 +23,16 @@ if df.empty:
     st.warning("Dataset is empty")
     st.stop()
 
+# Cast Risk_Flag to string so Plotly treats it as categorical
+df["Risk_Flag"] = df["Risk_Flag"].astype(str)
+
 st.success(f"✅ Data Loaded: {df.shape}")
 
 # --- KPI SECTION ---
 col1, col2, col3 = st.columns(3)
 
 col1.metric("Total Records", len(df))
-col2.metric("Risk %", f"{df['Risk_Flag'].mean()*100:.2f}%")
+col2.metric("Risk %", f"{(df['Risk_Flag'] == '1').mean()*100:.2f}%")
 col3.metric("Avg Income", f"{df['Income'].mean():.2f}")
 
 st.markdown("---")
@@ -44,7 +47,7 @@ fig1 = px.pie(
     names="Risk_Flag",
     title="Risk vs Safe Distribution",
     color="Risk_Flag",
-    color_discrete_map={0: "green", 1: "red"}
+    color_discrete_map={"0": "green", "1": "red"}
 )
 
 st.plotly_chart(fig1, use_container_width=True)
@@ -52,38 +55,28 @@ st.plotly_chart(fig1, use_container_width=True)
 # 2. Income vs Risk
 st.subheader("🔹 Income Distribution by Risk")
 
+df_sample = df.sample(n=10000, random_state=42)
 fig2 = px.box(
-    df,
+    df_sample,
     x="Risk_Flag",
     y="Income",
     color="Risk_Flag",
-    title="Income vs Risk"
+    color_discrete_map={"0": "green", "1": "red"},
+    title="Income vs Risk (10k sample)"
 )
 
 st.plotly_chart(fig2, use_container_width=True)
-
-# 3. Age Distribution
-st.subheader("🔹 Age Distribution")
-
-fig3 = px.histogram(
-    df,
-    x="Age",
-    color="Risk_Flag",
-    nbins=30,
-    title="Age Distribution by Risk"
-)
-
-st.plotly_chart(fig3, use_container_width=True)
 
 # 4. Experience vs Risk
 st.subheader("🔹 Experience vs Risk")
 
 fig4 = px.box(
-    df,
+    df_sample,
     x="Risk_Flag",
     y="Experience",
     color="Risk_Flag",
-    title="Experience vs Risk"
+    color_discrete_map={"0": "green", "1": "red"},
+    title="Experience vs Risk (10k sample)"
 )
 
 st.plotly_chart(fig4, use_container_width=True)

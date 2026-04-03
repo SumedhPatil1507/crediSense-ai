@@ -53,12 +53,15 @@ if file:
         if hasattr(X, "toarray"):
             X = X.toarray()
 
+        # Get feature names from preprocessor (after OHE expansion)
+        feature_names = pre.get_feature_names_out().tolist()
+
         explainer = shap.TreeExplainer(mod)
         shap_values = explainer.shap_values(X)
 
         sv = shap_values[1] if isinstance(shap_values, list) else shap_values
 
-        shap.summary_plot(sv, X, show=False)
+        shap.summary_plot(sv, X, feature_names=feature_names, show=False)
         st.pyplot(plt.gcf())
         plt.clf()
 

@@ -1,13 +1,13 @@
 import streamlit as st
 import joblib
 import json
-import sys
 from pathlib import Path
+import sys
 
 BASE_DIR = Path(__file__).resolve().parents[2]
 sys.path.append(str(BASE_DIR))
 
-from utils import build_full_input 
+from utils import build_full_input
 
 model = joblib.load(BASE_DIR / "models/model.pkl")
 cols = json.load(open(BASE_DIR / "models/columns.json"))
@@ -21,7 +21,7 @@ if text:
         vals = text.split(",")
 
         if len(vals) != 3:
-            st.warning("Enter exactly 3 values: income,age,experience")
+            st.warning("Use format: 0.5,0.3,0.2")
             st.stop()
 
         income, age, exp = map(float, vals)
@@ -41,5 +41,5 @@ if text:
         else:
             st.success(f"✅ Safe ({prob:.2%})")
 
-    except Exception as e:
-        st.error("Invalid input format. Use: 0.5,0.3,0.2")
+    except:
+        st.error("Invalid input")

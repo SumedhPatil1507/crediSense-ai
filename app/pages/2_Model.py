@@ -12,13 +12,19 @@ from utils import build_full_input
 model = joblib.load(BASE_DIR / "models/model.pkl")
 cols = json.load(open(BASE_DIR / "models/columns.json"))
 
-st.title("🔍 Loan Risk Prediction")
+st.set_page_config(layout="wide")
+st.title("💳 Loan Risk Prediction")
 
-income = st.slider("Income", 0.0, 1.0, 0.5)
-age = st.slider("Age", 0.0, 1.0, 0.3)
-exp = st.slider("Experience", 0.0, 1.0, 0.2)
+col1, col2 = st.columns(2)
 
-if st.button("Predict"):
+with col1:
+    income = st.slider("Income", 0.0, 1.0, 0.5)
+    age = st.slider("Age", 0.0, 1.0, 0.3)
+
+with col2:
+    exp = st.slider("Experience", 0.0, 1.0, 0.2)
+
+if st.button("🚀 Predict"):
 
     user_input = {
         "Income": income,
@@ -36,3 +42,6 @@ if st.button("Predict"):
         st.error("⚠️ High Risk")
     else:
         st.success("✅ Safe")
+
+    decision = "Approve" if prob < 0.3 else "Review" if prob < 0.6 else "Reject"
+    st.info(f"Decision: {decision}")

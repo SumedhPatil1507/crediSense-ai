@@ -12,16 +12,18 @@ from utils import build_full_input
 model = joblib.load(BASE_DIR / "models/model.pkl")
 cols = json.load(open(BASE_DIR / "models/columns.json"))
 
-st.title("🤖 Credit Risk Chatbot")
+st.title("🤖 AI Risk Assistant")
 
-text = st.text_input("Enter: income,age,experience")
+st.write("Enter values like: 0.5,0.3,0.2")
+
+text = st.text_input("Input:")
 
 if text:
     try:
         vals = text.split(",")
 
         if len(vals) != 3:
-            st.warning("Use format: 0.5,0.3,0.2")
+            st.warning("Enter exactly 3 values")
             st.stop()
 
         income, age, exp = map(float, vals)
@@ -41,5 +43,5 @@ if text:
         else:
             st.success(f"✅ Safe ({prob:.2%})")
 
-    except:
-        st.error("Invalid input")
+    except Exception as e:
+        st.error("Invalid format. Use: 0.5,0.3,0.2")

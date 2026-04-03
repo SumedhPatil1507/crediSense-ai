@@ -49,6 +49,10 @@ if file:
 
         X = pre.transform(sample)
 
+        # Convert sparse matrix to dense for SHAP compatibility
+        if hasattr(X, "toarray"):
+            X = X.toarray()
+
         explainer = shap.TreeExplainer(mod)
         shap_values = explainer.shap_values(X)
 

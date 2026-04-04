@@ -1,0 +1,29 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+jobs:
+  lint-and-import-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Check imports
+        run: |
+          python -c "from src.data_loader import load_data"
+          python -c "from src.feature_engineering import create_features"
+          python -c "from src.evaluate import evaluate, threshold_analysis"
+          python -c "from utils import build_full_input"
+          echo "All imports OK"

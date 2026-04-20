@@ -22,7 +22,9 @@ An AI-powered **Credit Risk Scoring System** that predicts loan default probabil
 ## 🛠️ Tech Stack
 
 - **ML:** LightGBM, Scikit-learn (Pipeline + ColumnTransformer)
-- **Explainability:** SHAP TreeExplainer
+- **Explainability:** SHAP TreeExplainer (summary, waterfall, dependence plots)
+- **LLM:** Groq API · llama3-8b-8192 (prediction explanations + conversational analyst)
+- **Live Data:** World Bank Open Data API (GDP, unemployment, inflation, NPA ratio)
 - **Frontend:** Streamlit + Plotly
 - **Data:** Pandas, NumPy
 - **CI:** GitHub Actions
@@ -109,6 +111,18 @@ credisense-ai/
 # Install dependencies
 pip install -r requirements.txt
 
+# Add Groq API key (free at console.groq.com)
+cp .streamlit/secrets.toml.example .streamlit/secrets.toml
+# Edit .streamlit/secrets.toml and add your GROQ_API_KEY
+
 # Start the app
 streamlit run app/app.py
 ```
+
+## 🔑 LLM Setup (Groq — Free)
+
+1. Get a free API key at [https://console.groq.com](https://console.groq.com)
+2. **Local:** copy `.streamlit/secrets.toml.example` → `.streamlit/secrets.toml` and add your key
+3. **Streamlit Cloud:** go to App Settings → Secrets → add `GROQ_API_KEY = "gsk_..."`
+
+The app works without the key (rule-based fallback), but LLM features require it.

@@ -15,6 +15,9 @@ venv/
 # Logs
 *.log
 
+# Streamlit secrets (never commit real keys)
+.streamlit/secrets.toml
+
 # allow model files
 !models/model.pkl
 !models/columns.json

@@ -17,6 +17,7 @@ from src.data_loader import load_data
 from src.preprocessing import clean_data
 from src.feature_engineering import create_features
 from src.evaluate import evaluate, threshold_analysis, compare_models
+from src.llm import explain_prediction
 
 model = joblib.load(BASE_DIR / "models/model.pkl")
 with open(BASE_DIR / "models/columns.json") as f:
@@ -70,6 +71,12 @@ with tabs[0]:
             st.warning(f"Decision: {decision}")
         else:
             st.error(f"Decision: {decision}")
+
+        st.markdown("---")
+        st.subheader("📝 AI Explanation")
+        with st.spinner("Generating explanation..."):
+            explanation = explain_prediction(prob, income, age, exp)
+        st.info(explanation)
 
 # ── TAB 2: Model Performance ───────────────────────────────────────────────────
 with tabs[1]:

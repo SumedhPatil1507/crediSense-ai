@@ -6,15 +6,30 @@ st.title("💳 CrediSense AI")
 st.markdown("### AI-Powered Credit Risk Scoring System")
 st.markdown("---")
 
-col1, col2, col3, col4 = st.columns(4)
-col1.info("📊 **EDA**\nExplore the dataset and risk distributions")
-col2.success("💳 **Model**\nPredict risk + view performance metrics")
-col3.warning("🧠 **Explainability**\nSHAP feature importance analysis")
-col4.error("🤖 **Chatbot**\nAsk the AI risk assistant")
+c1, c2, c3, c4, c5 = st.columns(5)
+c1.info("📊 **EDA**\nDataset + live macro indicators")
+c2.success("💳 **Model**\nPredict · Metrics · Compare · Threshold")
+c3.warning("🧠 **Explainability**\nSHAP summary · Waterfall · Dependence")
+c4.error("🤖 **Chatbot**\nRisk assistant + Q&A knowledge base")
+c5.info("📋 **Logs**\nUsage logs · Feedback · Analysis")
 
 st.markdown("---")
-st.markdown(
-    "Navigate using the sidebar. "
-    "Upload `loan_cleaned.csv` in the Model and Explainability pages for live evaluation."
-)
+col_l, col_r = st.columns(2)
+with col_l:
+    st.markdown("""
+    **What this system does:**
+    - Predicts loan default probability using LightGBM
+    - Explains predictions with SHAP values
+    - Tracks analyst feedback for model improvement
+    - Shows live India macroeconomic context
+    """)
+with col_r:
+    st.markdown("""
+    **Data & Model:**
+    - 252,000 loan records · 12% default rate
+    - LightGBM · ROC-AUC ~0.97 · Gini ~0.94
+    - [Kaggle Dataset](https://www.kaggle.com/datasets/subhamjain/loan-prediction-based-on-customer-behavior) ·
+      [LightGBM Paper](https://papers.nips.cc/paper/2017/hash/6449f44a102fde848669bdd9eb6b76fa-Abstract.html)
+    """)
+
 st.sidebar.success("Select a page above 👆")

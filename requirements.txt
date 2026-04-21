@@ -9,3 +9,5 @@ seaborn
 shap
 joblib
 requests
+lime
+fpdf2

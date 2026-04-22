@@ -18,6 +18,10 @@ def generate_pdf_report(income: float, age: float, experience: float,
     if not FPDF_AVAILABLE:
         return None
 
+    # Use latin-1 safe text only — strip any non-ASCII characters
+    def safe(text: str) -> str:
+        return text.encode("latin-1", errors="replace").decode("latin-1")
+
     pdf = FPDF()
     pdf.add_page()
     pdf.set_auto_page_break(auto=True, margin=15)
@@ -26,14 +30,14 @@ def generate_pdf_report(income: float, age: float, experience: float,
     pdf.set_font("Helvetica", "B", 18)
     pdf.set_fill_color(31, 119, 180)
     pdf.set_text_color(255, 255, 255)
-    pdf.cell(0, 12, "CrediSense AI - Loan Risk Assessment Report", fill=True, ln=True, align="C")
+    pdf.cell(0, 12, safe("CrediSense AI - Loan Risk Assessment Report"), fill=True, ln=True, align="C")
     pdf.set_text_color(0, 0, 0)
     pdf.ln(4)
 
     # Metadata
     pdf.set_font("Helvetica", "", 10)
-    pdf.cell(0, 6, f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}", ln=True)
-    pdf.cell(0, 6, f"Model: LightGBM | Dataset: Kaggle Loan Prediction (252k records)", ln=True)
+    pdf.cell(0, 6, safe(f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"), ln=True)
+    pdf.cell(0, 6, safe("Model: LightGBM | Dataset: Kaggle Loan Prediction (252k records)"), ln=True)
     pdf.ln(4)
 
     # Decision banner
@@ -44,7 +48,7 @@ def generate_pdf_report(income: float, age: float, experience: float,
         pdf.set_fill_color(255, 243, 205)
     else:
         pdf.set_fill_color(248, 215, 218)
-    pdf.cell(0, 10, f"Decision: {decision}  |  Risk: {prob:.1%}  |  Confidence: {confidence}",
+    pdf.cell(0, 10, safe(f"Decision: {decision}  |  Risk: {prob:.1%}  |  Confidence: {confidence}"),
              fill=True, ln=True, align="C")
     pdf.ln(4)
 
@@ -64,14 +68,14 @@ def generate_pdf_report(income: float, age: float, experience: float,
     pdf.cell(0, 7, f"Default Probability: {prob:.2%}", ln=True)
     pdf.cell(0, 7, f"Safe Probability: {1-prob:.2%}", ln=True)
     pdf.cell(0, 7, f"95% Confidence Interval: [{ci_lower:.2%}, {ci_upper:.2%}]", ln=True)
-    pdf.cell(0, 7, f"Confidence Level: {confidence}", ln=True)
+    pdf.cell(0, 7, safe(f"Confidence Level: {confidence}"), ln=True)
     pdf.ln(4)
 
     # Explanation
     pdf.set_font("Helvetica", "B", 12)
     pdf.cell(0, 8, "Explanation", ln=True)
     pdf.set_font("Helvetica", "", 10)
-    pdf.multi_cell(0, 6, explanation)
+    pdf.multi_cell(0, 6, safe(explanation))
     pdf.ln(4)
 
     # Adverse action notice
@@ -80,10 +84,10 @@ def generate_pdf_report(income: float, age: float, experience: float,
         pdf.set_fill_color(248, 215, 218)
         pdf.cell(0, 8, "Adverse Action Notice", fill=True, ln=True)
         pdf.set_font("Helvetica", "", 10)
-        pdf.multi_cell(0, 6, adverse_notice["notice"])
+        pdf.multi_cell(0, 6, safe(adverse_notice["notice"]))
         pdf.ln(2)
         pdf.set_font("Helvetica", "I", 9)
-        pdf.cell(0, 6, adverse_notice["citation"], ln=True)
+        pdf.cell(0, 6, safe(adverse_notice["citation"]), ln=True)
         pdf.ln(4)
 
     # Footer

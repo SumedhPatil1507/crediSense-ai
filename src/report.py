@@ -1,101 +1,117 @@
-"""PDF Report Generator using fpdf2."""
-from pathlib import Path
+"""PDF Report Generator using reportlab (full Unicode support)."""
 from datetime import datetime
-import io
 
 try:
-    from fpdf import FPDF
-    FPDF_AVAILABLE = True
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib import colors
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.lib.units import cm
+    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+    from reportlab.lib.enums import TA_CENTER, TA_LEFT
+    import io
+    REPORTLAB_AVAILABLE = True
 except ImportError:
-    FPDF_AVAILABLE = False
+    REPORTLAB_AVAILABLE = False
+
+# Keep backward compat alias
+FPDF_AVAILABLE = REPORTLAB_AVAILABLE
 
 
 def generate_pdf_report(income: float, age: float, experience: float,
                          prob: float, decision: str, confidence: str,
                          ci_lower: float, ci_upper: float,
                          explanation: str, adverse_notice: dict | None = None) -> bytes | None:
-    """Generate a PDF report for a single prediction. Returns bytes or None if fpdf unavailable."""
-    if not FPDF_AVAILABLE:
+    if not REPORTLAB_AVAILABLE:
         return None
 
-    # Use latin-1 safe text only — strip any non-ASCII characters
-    def safe(text: str) -> str:
-        return text.encode("latin-1", errors="replace").decode("latin-1")
+    buf = io.BytesIO()
+    doc = SimpleDocTemplate(buf, pagesize=A4,
+                             rightMargin=2*cm, leftMargin=2*cm,
+                             topMargin=2*cm, bottomMargin=2*cm)
+    styles = getSampleStyleSheet()
+    story = []
 
-    pdf = FPDF()
-    pdf.add_page()
-    pdf.set_auto_page_break(auto=True, margin=15)
-
-    # Header
-    pdf.set_font("Helvetica", "B", 18)
-    pdf.set_fill_color(31, 119, 180)
-    pdf.set_text_color(255, 255, 255)
-    pdf.cell(0, 12, safe("CrediSense AI - Loan Risk Assessment Report"), fill=True, ln=True, align="C")
-    pdf.set_text_color(0, 0, 0)
-    pdf.ln(4)
+    # Title
+    title_style = ParagraphStyle("title", parent=styles["Title"],
+                                  textColor=colors.white,
+                                  backColor=colors.HexColor("#1f77b4"),
+                                  alignment=TA_CENTER, fontSize=18, spaceAfter=12)
+    story.append(Paragraph("CrediSense AI - Loan Risk Assessment Report", title_style))
+    story.append(Spacer(1, 0.3*cm))
 
     # Metadata
-    pdf.set_font("Helvetica", "", 10)
-    pdf.cell(0, 6, safe(f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"), ln=True)
-    pdf.cell(0, 6, safe("Model: LightGBM | Dataset: Kaggle Loan Prediction (252k records)"), ln=True)
-    pdf.ln(4)
+    story.append(Paragraph(f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}", styles["Normal"]))
+    story.append(Paragraph("Model: LightGBM | Dataset: Kaggle Loan Prediction (252k records)", styles["Normal"]))
+    story.append(Spacer(1, 0.4*cm))
 
     # Decision banner
-    pdf.set_font("Helvetica", "B", 14)
-    if decision == "Approve":
-        pdf.set_fill_color(212, 237, 218)
-    elif decision == "Manual Review":
-        pdf.set_fill_color(255, 243, 205)
-    else:
-        pdf.set_fill_color(248, 215, 218)
-    pdf.cell(0, 10, safe(f"Decision: {decision}  |  Risk: {prob:.1%}  |  Confidence: {confidence}"),
-             fill=True, ln=True, align="C")
-    pdf.ln(4)
+    dec_color = {"Approve": "#d4edda", "Manual Review": "#fff3cd"}.get(decision, "#f8d7da")
+    dec_style = ParagraphStyle("dec", parent=styles["Heading2"],
+                                backColor=colors.HexColor(dec_color),
+                                alignment=TA_CENTER, spaceAfter=8)
+    story.append(Paragraph(f"Decision: {decision} | Risk: {prob:.1%} | Confidence: {confidence}", dec_style))
+    story.append(Spacer(1, 0.3*cm))
 
-    # Inputs
-    pdf.set_font("Helvetica", "B", 12)
-    pdf.cell(0, 8, "Applicant Inputs (Normalized)", ln=True)
-    pdf.set_font("Helvetica", "", 11)
-    pdf.cell(60, 7, f"Income: {income:.3f}", border=1)
-    pdf.cell(60, 7, f"Age: {age:.3f}", border=1)
-    pdf.cell(60, 7, f"Experience: {experience:.3f}", border=1, ln=True)
-    pdf.ln(4)
+    # Inputs table
+    story.append(Paragraph("Applicant Inputs (Normalized)", styles["Heading3"]))
+    input_data = [["Income", "Age", "Experience"],
+                  [f"{income:.3f}", f"{age:.3f}", f"{experience:.3f}"]]
+    t = Table(input_data, colWidths=[5*cm, 5*cm, 5*cm])
+    t.setStyle(TableStyle([
+        ("BACKGROUND", (0,0), (-1,0), colors.HexColor("#1f77b4")),
+        ("TEXTCOLOR",  (0,0), (-1,0), colors.white),
+        ("ALIGN",      (0,0), (-1,-1), "CENTER"),
+        ("GRID",       (0,0), (-1,-1), 0.5, colors.grey),
+        ("FONTSIZE",   (0,0), (-1,-1), 11),
+    ]))
+    story.append(t)
+    story.append(Spacer(1, 0.4*cm))
 
     # Risk metrics
-    pdf.set_font("Helvetica", "B", 12)
-    pdf.cell(0, 8, "Risk Assessment", ln=True)
-    pdf.set_font("Helvetica", "", 11)
-    pdf.cell(0, 7, f"Default Probability: {prob:.2%}", ln=True)
-    pdf.cell(0, 7, f"Safe Probability: {1-prob:.2%}", ln=True)
-    pdf.cell(0, 7, f"95% Confidence Interval: [{ci_lower:.2%}, {ci_upper:.2%}]", ln=True)
-    pdf.cell(0, 7, safe(f"Confidence Level: {confidence}"), ln=True)
-    pdf.ln(4)
+    story.append(Paragraph("Risk Assessment", styles["Heading3"]))
+    metrics = [
+        ["Metric", "Value"],
+        ["Default Probability", f"{prob:.2%}"],
+        ["Safe Probability",    f"{1-prob:.2%}"],
+        ["95% Confidence Interval", f"[{ci_lower:.2%}, {ci_upper:.2%}]"],
+        ["Confidence Level",    confidence],
+    ]
+    mt = Table(metrics, colWidths=[9*cm, 7*cm])
+    mt.setStyle(TableStyle([
+        ("BACKGROUND", (0,0), (-1,0), colors.HexColor("#1f77b4")),
+        ("TEXTCOLOR",  (0,0), (-1,0), colors.white),
+        ("ROWBACKGROUNDS", (0,1), (-1,-1), [colors.whitesmoke, colors.white]),
+        ("GRID",       (0,0), (-1,-1), 0.5, colors.grey),
+        ("FONTSIZE",   (0,0), (-1,-1), 11),
+    ]))
+    story.append(mt)
+    story.append(Spacer(1, 0.4*cm))
 
     # Explanation
-    pdf.set_font("Helvetica", "B", 12)
-    pdf.cell(0, 8, "Explanation", ln=True)
-    pdf.set_font("Helvetica", "", 10)
-    pdf.multi_cell(0, 6, safe(explanation))
-    pdf.ln(4)
+    story.append(Paragraph("Explanation", styles["Heading3"]))
+    story.append(Paragraph(explanation, styles["Normal"]))
+    story.append(Spacer(1, 0.4*cm))
 
-    # Adverse action notice
+    # Adverse action
     if adverse_notice and adverse_notice.get("required"):
-        pdf.set_font("Helvetica", "B", 12)
-        pdf.set_fill_color(248, 215, 218)
-        pdf.cell(0, 8, "Adverse Action Notice", fill=True, ln=True)
-        pdf.set_font("Helvetica", "", 10)
-        pdf.multi_cell(0, 6, safe(adverse_notice["notice"]))
-        pdf.ln(2)
-        pdf.set_font("Helvetica", "I", 9)
-        pdf.cell(0, 6, safe(adverse_notice["citation"]), ln=True)
-        pdf.ln(4)
+        adv_style = ParagraphStyle("adv", parent=styles["Heading3"],
+                                    backColor=colors.HexColor("#f8d7da"))
+        story.append(Paragraph("Adverse Action Notice", adv_style))
+        notice_text = adverse_notice["notice"].replace("\n", "<br/>")
+        story.append(Paragraph(notice_text, styles["Normal"]))
+        story.append(Spacer(1, 0.2*cm))
+        story.append(Paragraph(adverse_notice["citation"], styles["Italic"]))
+        story.append(Spacer(1, 0.4*cm))
 
     # Footer
-    pdf.set_font("Helvetica", "I", 8)
-    pdf.set_text_color(128, 128, 128)
-    pdf.cell(0, 6, "This report is generated by an AI model and should be reviewed by a qualified analyst.",
-             ln=True, align="C")
-    pdf.cell(0, 6, "Sources: Kaggle | scikit-learn | LightGBM (NeurIPS 2017) | World Bank Open Data",
-             ln=True, align="C")
+    footer_style = ParagraphStyle("footer", parent=styles["Normal"],
+                                   fontSize=8, textColor=colors.grey, alignment=TA_CENTER)
+    story.append(Paragraph(
+        "This report is generated by an AI model and should be reviewed by a qualified analyst.",
+        footer_style))
+    story.append(Paragraph(
+        "Sources: Kaggle | scikit-learn | LightGBM (NeurIPS 2017) | World Bank Open Data",
+        footer_style))
 
-    return bytes(pdf.output())
+    doc.build(story)
+    return buf.getvalue()

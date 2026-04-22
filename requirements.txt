@@ -10,4 +10,4 @@ shap
 joblib
 requests
 lime
-fpdf2
+reportlab

@@ -1,5 +1,6 @@
 import streamlit as st
 import joblib
+import warnings
 import pandas as pd
 import numpy as np
 import shap
@@ -60,7 +61,6 @@ try:
 
         idx = st.slider("Select applicant", 0, len(sample) - 1, 0)
         with warnings.catch_warnings():
-            import warnings
             warnings.simplefilter("ignore")
             prob = model.predict_proba(sample.iloc[[idx]])[0][1]
 
@@ -130,7 +130,6 @@ try:
             lime_exp_obj = get_lime_explainer()
 
             with st.spinner("Running LIME..."):
-                import warnings
                 with warnings.catch_warnings():
                     warnings.simplefilter("ignore")
                     def predict_fn(x):

@@ -1,39 +1,40 @@
-# 💳 CrediSense AI
+# CrediSense AI
 
-An AI-powered **Credit Risk Scoring System** that predicts loan default probability and provides explainable, business-ready financial decisions.
+An AI-powered **Credit Risk Scoring System** that predicts loan default probability with explainability, live macroeconomic context, real-time news, confidence intervals, adverse action notices, PDF reports, and analyst feedback loops.
 
-🌐 **Live App:** [https://credisense-ai-uzzvdsxuuxdbocfwxhmqcc.streamlit.app/](https://credisense-ai-uzzvdsxuuxdbocfwxhmqcc.streamlit.app/)
+**Live App:** https://credisense-ai-uzzvdsxuuxdbocfwxhmqcc.streamlit.app/
 
-![CI](https://github.com/YOUR_USERNAME/credisense-ai/actions/workflows/ci.yml/badge.svg)
+![CI](https://github.com/SumedhPatil1507/crediSense-ai/actions/workflows/ci.yml/badge.svg)
 
 ---
 
-## 🚀 Features
+## Features
 
-| Page | Description |
+| Page | What it does |
 |------|-------------|
-| 📊 EDA | Interactive data analysis — risk distribution, income & experience breakdowns |
-| 💳 Model | Live prediction with risk gauge, full model metrics, ROC curve, confusion matrix, threshold analysis |
-| 🧠 Explainability | SHAP summary plot — feature-level explanation of predictions |
-| 🤖 Chatbot | Natural language risk assistant — enter Income, Age, Experience to get instant prediction |
+| EDA | Violin plots, correlation heatmap, geographic treemap, profession analysis, interactive deep dive, live macro dashboard, RSS news feed |
+| Model | Prediction + 95% bootstrap CI + risk gauge + what-if simulator + ROC/PR/calibration curves + model comparison + threshold analysis |
+| Explainability | SHAP summary, waterfall, dependence plots + LIME local explanations |
+| Chatbot | Risk prediction with rule-based explanation + credit risk Q&A knowledge base |
+| Logs | Usage logs, analyst feedback, audit trail (PII-hashed), cost-benefit tracker, performance drift monitor |
 
 ---
 
-## 🛠️ Tech Stack
+## Tech Stack
 
 - **ML:** LightGBM, Scikit-learn (Pipeline + ColumnTransformer)
-- **Explainability:** SHAP TreeExplainer (summary, waterfall, dependence plots)
-- **LLM:** Groq API · llama3-8b-8192 (prediction explanations + conversational analyst)
-- **Live Data:** World Bank Open Data API (GDP, unemployment, inflation, NPA ratio)
+- **Explainability:** SHAP TreeExplainer + LIME TabularExplainer
+- **Live Data:** World Bank Open Data API, RSS news feeds (feedparser)
+- **PDF Reports:** ReportLab (full Unicode support)
 - **Frontend:** Streamlit + Plotly
-- **Data:** Pandas, NumPy
+- **Compliance:** ECOA/FCRA adverse action notices, audit logs, PII masking
 - **CI:** GitHub Actions
 
 ---
 
-## 🧠 Model
+## Model
 
-**Algorithm:** LightGBM (`LGBMClassifier`)
+**Algorithm:** LightGBM (LGBMClassifier)
 
 Chosen over Random Forest and XGBoost because:
 - Handles class imbalance natively via `class_weight='balanced'`
@@ -51,78 +52,104 @@ Chosen over Random Forest and XGBoost because:
 | subsample | 0.8 |
 | class_weight | balanced |
 
-**Performance (20% holdout test set):**
+**Performance (20% stratified holdout):**
 
 | Metric | Score |
 |--------|-------|
 | ROC-AUC | ~0.97 |
-| F1 Score (Risk class) | ~0.72 |
-
-> Exact metrics vary by run. Upload `loan_cleaned.csv` in the Model page to compute live metrics.
+| Gini Coefficient | ~0.94 |
+| KS Statistic | ~0.75 |
+| PR-AUC | ~0.72 |
+| F1 (Risk class) | ~0.72 |
+| Brier Score | ~0.08 |
 
 ---
 
-## � Project Structure
+## Project Structure
 
 ```
 credisense-ai/
 ├── app/
-│   ├── app.py                  # Streamlit entry point
+│   ├── app.py                  # Landing page
 │   └── pages/
-│       ├── 1_EDA.py            # Exploratory data analysis
-│       ├── 2_Model.py          # Prediction + model evaluation
-│       ├── 3_Explainability.py # SHAP explainability
-│       └── 4_Chatbot.py        # AI risk assistant
+│       ├── 1_EDA.py            # Data intelligence hub
+│       ├── 2_Model.py          # Prediction + evaluation + what-if
+│       ├── 3_Explainability.py # SHAP + LIME
+│       ├── 4_Chatbot.py        # Risk assistant + Q&A
+│       └── 5_Logs.py           # Logs + audit + cost-benefit
 ├── src/
-│   ├── config.py               # Paths and constants
-│   ├── data_loader.py          # CSV loading
-│   ├── preprocessing.py        # Data cleaning
-│   ├── feature_engineering.py  # Feature creation
-│   ├── encoding.py             # ColumnTransformer setup
-│   ├── pipeline.py             # Sklearn pipeline
-│   ├── train.py                # Training script
-│   ├── evaluate.py             # Metrics + threshold analysis
-│   └── tuning.py               # Hyperparameter search
+│   ├── config.py
+│   ├── data_loader.py
+│   ├── preprocessing.py
+│   ├── feature_engineering.py
+│   ├── encoding.py
+│   ├── pipeline.py
+│   ├── train.py
+│   ├── evaluate.py             # AUC, Gini, KS, PR-AUC, calibration
+│   ├── tuning.py
+│   ├── explainability.py       # SHAP helpers
+│   ├── confidence_intervals.py # Bootstrap CI
+│   ├── adverse_action.py       # ECOA/FCRA notices
+│   ├── feedback.py             # Usage + feedback logging
+│   ├── validation.py           # Input validation, PII masking, audit log
+│   ├── live_data.py            # World Bank API + RSS news scraper
+│   └── report.py               # PDF report generator (ReportLab)
 ├── models/
-│   ├── model.pkl               # Trained pipeline
-│   └── columns.json            # Expected feature columns
+│   ├── model.pkl
+│   └── columns.json
 ├── data/
-│   ├── loan_cleaned.csv        # Cleaned dataset
-│   └── sample_input.csv        # Sample input for explainability
-├── utils.py                    # Input builder for inference
+│   ├── loan_cleaned.csv        # 252k loan records
+│   └── sample_input.csv
+├── utils.py
 ├── requirements.txt
-└── .github/workflows/ci.yml    # GitHub Actions CI
+└── .github/workflows/ci.yml
 ```
 
 ---
 
-## 💡 Business Value
+## Business Value
 
-- Automates loan approval decisions with 3-tier logic (Approve / Review / Reject)
-- Threshold analysis lets risk teams tune precision vs recall tradeoff
-- SHAP explanations make decisions auditable and regulation-friendly
-- Reduces manual review overhead for financial institutions
+- 3-tier decision engine: Approve / Manual Review / Reject
+- Bootstrap confidence intervals flag borderline cases for human review
+- ECOA/FCRA-compliant adverse action notices for every rejection
+- SHAP + LIME explanations make decisions auditable
+- Analyst feedback loop captures corrections for future retraining
+- Cost-benefit tracker simulates P&L impact of model decisions
+- Live macro dashboard contextualises predictions with RBI/World Bank data
+- Real-time RSS news feed for credit risk and banking developments
 
 ---
 
-## 📦 Run Locally
+## Citations
+
+- Dataset: https://www.kaggle.com/datasets/subhamjain/loan-prediction-based-on-customer-behavior
+- LightGBM: https://papers.nips.cc/paper/2017/hash/6449f44a102fde848669bdd9eb6b76fa-Abstract.html
+- SHAP: https://papers.nips.cc/paper/2017/hash/8a20a8621978632d76c43dfd28b67767-Abstract.html
+- LIME: https://arxiv.org/abs/1602.04938
+- Metrics: https://scikit-learn.org/stable/modules/model_evaluation.html
+- Compliance: https://www.bis.org/publ/bcbs128.htm
+- Live Data: https://data.worldbank.org
+
+---
+
+## Run Locally
 
 ```bash
-# Install dependencies
 pip install -r requirements.txt
-
-# Add Groq API key (free at console.groq.com)
-cp .streamlit/secrets.toml.example .streamlit/secrets.toml
-# Edit .streamlit/secrets.toml and add your GROQ_API_KEY
-
-# Start the app
 streamlit run app/app.py
 ```
 
-## 🔑 LLM Setup (Groq — Free)
+---
 
-1. Get a free API key at [https://console.groq.com](https://console.groq.com)
-2. **Local:** copy `.streamlit/secrets.toml.example` → `.streamlit/secrets.toml` and add your key
-3. **Streamlit Cloud:** go to App Settings → Secrets → add `GROQ_API_KEY = "gsk_..."`
+## Deploy to Streamlit Cloud
 
-The app works without the key (rule-based fallback), but LLM features require it.
+1. Push to GitHub
+2. Go to streamlit.io/cloud -> New app
+3. Set main file: `app/app.py`
+4. Click Deploy
+
+```bash
+git add .
+git commit -m "your message"
+git push
+```

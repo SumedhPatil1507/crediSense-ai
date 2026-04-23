@@ -144,8 +144,7 @@ with tabs[1]:
     else:
         fig_d = px.scatter(df_sample, x=x_feat, y=y_feat, color=color_arg,
                             color_discrete_map=COLORS, opacity=0.4,
-                            title=f"{x_feat} vs {y_feat}",
-                            trendline="ols" if not color_by_risk else None)
+                            title=f"{x_feat} vs {y_feat}")
 
     fig_d.update_layout(height=420)
     st.plotly_chart(fig_d, use_container_width=True)
@@ -337,7 +336,7 @@ with tabs[3]:
     if not npa_df.empty and not gdp_df.empty:
         merged = npa_df.merge(gdp_df, on="year", suffixes=("_npa", "_gdp"))
         fig_scatter = px.scatter(merged, x="value_gdp", y="value_npa",
-                                  text="year", trendline="ols",
+                                  text="year",
                                   labels={"value_gdp": "GDP Growth (%)",
                                           "value_npa": "Bank NPA Ratio (%)"},
                                   title="GDP Growth vs Bank NPA Ratio (India)")

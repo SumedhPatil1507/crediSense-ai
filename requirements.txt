@@ -12,3 +12,4 @@ requests
 lime
 reportlab
 feedparser
+statsmodels

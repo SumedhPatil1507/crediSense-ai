@@ -169,7 +169,6 @@ with tabs[1]:
         fig_prof = px.bar(prof_df, x="Default Rate", y="Profession",
                           orientation="h", color="Default Rate",
                           color_continuous_scale="Reds",
-                          size="Count" if "Count" in prof_df.columns else None,
                           title=f"Top {top_n} Professions by Default Rate",
                           text="Default Rate")
         fig_prof.update_traces(texttemplate="%{text:.1%}", textposition="outside")

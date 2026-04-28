@@ -1,0 +1,18 @@
+[
+  {
+    "version_id": "v1.0",
+    "timestamp": "2026-04-28T15:47:33.320164",
+    "model_path": "models/model.pkl",
+    "model_hash": "f18be09079d5",
+    "metrics": {
+      "AUC": 0.97,
+      "PR_AUC": 0.72,
+      "Gini": 0.94,
+      "KS": 0.75,
+      "F1": 0.72,
+      "Brier": 0.08
+    },
+    "description": "LightGBM v1 \u2014 initial production model, trained on 252k loan records",
+    "status": "active"
+  }
+]

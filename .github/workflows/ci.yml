@@ -7,7 +7,7 @@ on:
     branches: [main, master]
 
 jobs:
-  lint-and-import-check:
+  test:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
@@ -18,12 +18,36 @@ jobs:
           python-version: "3.11"
 
       - name: Install dependencies
-        run: pip install -r requirements.txt
+        run: pip install -r requirements.txt -r requirements-api.txt pytest httpx
 
-      - name: Check imports
+      - name: Check all imports
         run: |
-          python -c "from src.data_loader import load_data"
-          python -c "from src.feature_engineering import create_features"
-          python -c "from src.evaluate import evaluate, threshold_analysis"
-          python -c "from utils import build_full_input"
-          echo "All imports OK"
+          python -c "from src.data_loader import load_data; print('OK: data_loader')"
+          python -c "from src.feature_engineering import create_features; print('OK: feature_engineering')"
+          python -c "from src.evaluate import evaluate, threshold_analysis, compare_models; print('OK: evaluate')"
+          python -c "from src.confidence_intervals import bootstrap_ci; print('OK: confidence_intervals')"
+          python -c "from src.adverse_action import generate_adverse_action; print('OK: adverse_action')"
+          python -c "from src.database import db_status; print('OK: database:', db_status())"
+          python -c "from src.drift_monitor import compute_psi, interpret_psi; print('OK: drift_monitor')"
+          python -c "from src.hitl_queue import get_queue, queue_stats; print('OK: hitl_queue')"
+          python -c "from src.shadow_mode import get_shadow_log; print('OK: shadow_mode')"
+          python -c "from src.model_registry import get_all_versions; print('OK: model_registry')"
+          python -c "from src.alerts import alert; print('OK: alerts')"
+          python -c "from utils import build_full_input; print('OK: utils')"
+
+      - name: Run unit tests
+        run: pytest tests/test_pipeline.py -v --tb=short -x
+
+      - name: Run API tests
+        run: pytest tests/test_api.py -v --tb=short -x
+
+      - name: API health check
+        run: |
+          python -c "
+          from fastapi.testclient import TestClient
+          from api.main import app
+          client = TestClient(app)
+          r = client.get('/health')
+          assert r.status_code == 200
+          print('Health check passed:', r.json())
+          "

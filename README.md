@@ -1,6 +1,6 @@
 # CrediSense AI
 
-An AI-powered **Credit Risk Scoring System** that predicts loan default probability with explainability, live macroeconomic context, real-time news, confidence intervals, adverse action notices, PDF reports, and analyst feedback loops.
+A production-grade, end-to-end **Credit Risk Scoring System** built to enterprise standards. Predicts loan default probability with explainability, confidence intervals, regulatory compliance, live data, and full MLOps infrastructure.
 
 **Live App:** https://credisense-ai-uzzvdsxuuxdbocfwxhmqcc.streamlit.app/
 
@@ -8,40 +8,68 @@ An AI-powered **Credit Risk Scoring System** that predicts loan default probabil
 
 ---
 
-## Features
+## What Makes This Production-Grade
 
-| Page | What it does |
-|------|-------------|
-| EDA | Violin plots, correlation heatmap, geographic treemap, profession analysis, interactive deep dive, live macro dashboard, RSS news feed |
-| Model | Prediction + 95% bootstrap CI + risk gauge + what-if simulator + ROC/PR/calibration curves + model comparison + threshold analysis |
-| Explainability | SHAP summary, waterfall, dependence plots + LIME local explanations |
-| Chatbot | Risk prediction with rule-based explanation + credit risk Q&A knowledge base |
-| Logs | Usage logs, analyst feedback, audit trail (PII-hashed), cost-benefit tracker, performance drift monitor |
+| Capability | Implementation |
+|---|---|
+| ML Model | LightGBM with hyperparameter tuning, class imbalance handling |
+| Explainability | SHAP (global + waterfall + dependence) + LIME (local) |
+| Confidence Intervals | Bootstrap 95% CI on every prediction |
+| Regulatory Compliance | ECOA/FCRA adverse action notices, audit trail, PII masking |
+| Database | Supabase (PostgreSQL) with CSV fallback |
+| REST API | FastAPI with Pydantic validation, API key auth, Swagger docs |
+| Batch Processing | Up to 500 applicants per API call |
+| Model Versioning | Registry with hash verification and performance tracking |
+| Drift Monitoring | PSI (score-level) + CSI (feature-level) with auto-alerts |
+| Human-in-the-Loop | Auto-queue borderline cases for analyst review |
+| Shadow Mode | Run challenger model silently alongside champion |
+| Alerting | Webhook (Slack/Teams/Discord) + email alerts |
+| Containerization | Docker + docker-compose for API + Streamlit |
+| CI/CD | GitHub Actions with pytest unit + integration tests |
+| Live Data | World Bank API + RBI repo rate + RSS news feeds |
+| PDF Reports | ReportLab reports with CI, explanation, adverse notice |
 
 ---
 
-## Tech Stack
+## Architecture
 
-- **ML:** LightGBM, Scikit-learn (Pipeline + ColumnTransformer)
-- **Explainability:** SHAP TreeExplainer + LIME TabularExplainer
-- **Live Data:** World Bank Open Data API, RSS news feeds (feedparser)
-- **PDF Reports:** ReportLab (full Unicode support)
-- **Frontend:** Streamlit + Plotly
-- **Compliance:** ECOA/FCRA adverse action notices, audit logs, PII masking
-- **CI:** GitHub Actions
+```
+User/Client
+    |
+    v
+FastAPI Backend (api/main.py)          Streamlit Dashboard (app/)
+    |                                       |
+    +-- /predict (single)                   +-- 1_EDA.py (data + live macro + news)
+    +-- /predict/batch (up to 500)          +-- 2_Model.py (predict + evaluate + what-if)
+    +-- /explain (SHAP top features)        +-- 3_Explainability.py (SHAP + LIME)
+    +-- /feedback (analyst corrections)     +-- 4_Chatbot.py (risk assistant + Q&A)
+    +-- /metrics (aggregate stats)          +-- 5_Logs.py (logs + audit + cost-benefit)
+    +-- /health (system status)             +-- 6_Operations.py (HITL + drift + shadow)
+    |
+    v
+Supabase (PostgreSQL) / CSV fallback
+    |
+    +-- predictions table
+    +-- feedback table
+    +-- audit_log table
+```
 
 ---
 
-## Model
+## Model Performance
 
-**Algorithm:** LightGBM (LGBMClassifier)
+| Metric | Score | Industry Benchmark |
+|--------|-------|-------------------|
+| ROC-AUC | ~0.97 | > 0.75 = good |
+| Gini Coefficient | ~0.94 | > 0.60 = good |
+| KS Statistic | ~0.75 | > 0.40 = good |
+| PR-AUC | ~0.72 | Imbalanced data baseline ~0.12 |
+| F1 (Risk class) | ~0.72 | Depends on threshold |
+| Brier Score | ~0.08 | Lower = better calibrated |
 
-Chosen over Random Forest and XGBoost because:
-- Handles class imbalance natively via `class_weight='balanced'`
-- Faster training on large tabular datasets (gradient-based leaf-wise splitting)
-- Better performance on high-cardinality categorical features (Profession, City, State)
+**Algorithm:** LightGBM — chosen for gradient-based leaf-wise splitting, native class imbalance handling, and superior performance on high-cardinality categorical features (Profession, City, State).
 
-**Hyperparameters (tuned via RandomizedSearchCV):**
+**Hyperparameters (RandomizedSearchCV):**
 
 | Parameter | Value |
 |-----------|-------|
@@ -52,16 +80,41 @@ Chosen over Random Forest and XGBoost because:
 | subsample | 0.8 |
 | class_weight | balanced |
 
-**Performance (20% stratified holdout):**
+---
 
-| Metric | Score |
-|--------|-------|
-| ROC-AUC | ~0.97 |
-| Gini Coefficient | ~0.94 |
-| KS Statistic | ~0.75 |
-| PR-AUC | ~0.72 |
-| F1 (Risk class) | ~0.72 |
-| Brier Score | ~0.08 |
+## Business Impact
+
+### Problem
+Indian banks and NBFCs lose billions annually to loan defaults. Manual credit assessment is slow, inconsistent, and unscalable.
+
+### Quantified Results (illustrative, 1000 applications/month)
+
+| Metric | Without Model | With CrediSense AI |
+|--------|--------------|-------------------|
+| Default detection rate | ~50% (random) | ~85% recall |
+| Review time per application | 2-4 hours | < 1 second |
+| False approval rate | High | Reduced ~70% vs baseline |
+| Regulatory documentation | Manual | Auto-generated |
+
+### Financial Model
+- Avg loan: Rs 5,00,000 | Default rate: 12% | LGD: 60%
+- Without model: Expected monthly loss = Rs 3.6 Cr
+- With model (85% recall): Catches ~102 of 120 defaults
+- Net loss reduction: ~Rs 3.06 Cr/month = **Rs 36 Cr/year savings** on 1000 apps/month
+
+### Decision Framework
+
+| Risk Score | Decision | Rationale |
+|-----------|----------|-----------|
+| < 30% | Approve | Low default probability |
+| 30-60% | Manual Review | Borderline — human judgment |
+| > 60% | Reject | Capital preservation |
+
+### Regulatory Alignment
+- ECOA: Adverse action notices with specific decline reasons
+- FCRA: Applicant right-to-know documentation
+- Basel II: Expected Loss = PD x LGD x EAD methodology
+- RBI IT Framework: Audit trail, access controls, data lineage
 
 ---
 
@@ -69,89 +122,108 @@ Chosen over Random Forest and XGBoost because:
 
 ```
 credisense-ai/
+├── api/
+│   └── main.py              # FastAPI: predict, batch, explain, feedback, metrics
 ├── app/
-│   ├── app.py                  # Landing page
+│   ├── app.py               # Landing page with system status
 │   └── pages/
-│       ├── 1_EDA.py            # Data intelligence hub
-│       ├── 2_Model.py          # Prediction + evaluation + what-if
-│       ├── 3_Explainability.py # SHAP + LIME
-│       ├── 4_Chatbot.py        # Risk assistant + Q&A
-│       └── 5_Logs.py           # Logs + audit + cost-benefit
+│       ├── 1_EDA.py         # Data hub + live macro + news
+│       ├── 2_Model.py       # Predict + CI + what-if + evaluation
+│       ├── 3_Explainability.py  # SHAP + LIME
+│       ├── 4_Chatbot.py     # Risk assistant + Q&A
+│       ├── 5_Logs.py        # Logs + audit + cost-benefit
+│       └── 6_Operations.py  # HITL + drift + shadow + registry + alerts
 ├── src/
-│   ├── config.py
-│   ├── data_loader.py
-│   ├── preprocessing.py
-│   ├── feature_engineering.py
-│   ├── encoding.py
-│   ├── pipeline.py
-│   ├── train.py
-│   ├── evaluate.py             # AUC, Gini, KS, PR-AUC, calibration
-│   ├── tuning.py
-│   ├── explainability.py       # SHAP helpers
-│   ├── confidence_intervals.py # Bootstrap CI
-│   ├── adverse_action.py       # ECOA/FCRA notices
-│   ├── feedback.py             # Usage + feedback logging
-│   ├── validation.py           # Input validation, PII masking, audit log
-│   ├── live_data.py            # World Bank API + RSS news scraper
-│   └── report.py               # PDF report generator (ReportLab)
+│   ├── config.py            # Env-based config
+│   ├── database.py          # Supabase + CSV dual backend
+│   ├── model_registry.py    # Version tracking + hash verification
+│   ├── drift_monitor.py     # PSI + CSI computation
+│   ├── hitl_queue.py        # Human-in-the-loop queue
+│   ├── shadow_mode.py       # Champion vs challenger comparison
+│   ├── alerts.py            # Webhook + email alerting
+│   ├── adverse_action.py    # ECOA/FCRA notices
+│   ├── confidence_intervals.py  # Bootstrap CI
+│   ├── report.py            # PDF report generator
+│   ├── evaluate.py          # AUC, Gini, KS, PR-AUC, calibration
+│   ├── explainability.py    # SHAP helpers
+│   ├── validation.py        # Input validation + PII masking + audit
+│   ├── live_data.py         # World Bank API + RSS scraper
+│   └── feedback.py          # Legacy CSV logging
+├── tests/
+│   ├── test_pipeline.py     # Unit tests (validation, drift, adverse action, CI, HITL)
+│   └── test_api.py          # API integration tests
+├── db/
+│   └── schema.sql           # Supabase PostgreSQL schema
 ├── models/
-│   ├── model.pkl
-│   └── columns.json
-├── data/
-│   ├── loan_cleaned.csv        # 252k loan records
-│   └── sample_input.csv
-├── utils.py
+│   ├── model.pkl            # Trained LightGBM pipeline
+│   ├── columns.json         # Expected feature columns
+│   └── registry.json        # Model version registry
+├── Dockerfile
+├── docker-compose.yml
 ├── requirements.txt
-└── .github/workflows/ci.yml
+└── requirements-api.txt
 ```
 
 ---
 
-## Business Impact
+## Run Locally
 
-### Problem Statement
-Indian banks and NBFCs lose billions annually to loan defaults. Manual credit assessment is slow, inconsistent, and unscalable. CrediSense AI automates and augments this process with a production-grade ML system.
+```bash
+# Install dependencies
+pip install -r requirements.txt -r requirements-api.txt
 
-### Quantified Impact
+# Run Streamlit dashboard
+streamlit run app/app.py
 
-| Impact Area | Without Model | With CrediSense AI |
-|-------------|--------------|-------------------|
-| Default detection | ~50% (random) | ~85% recall at 0.5 threshold |
-| Review time per application | 2-4 hours (manual) | < 1 second |
-| False approval rate | High | Reduced by ~70% vs baseline |
-| Regulatory compliance | Manual documentation | Auto-generated adverse action notices |
-| Analyst productivity | 1 decision/hour | 100s of decisions/hour with oversight |
+# Run FastAPI backend
+uvicorn api.main:app --reload --port 8000
+# Swagger UI: http://localhost:8000/docs
 
-### Financial Model (illustrative, 1000 applications/month)
-- Avg loan: Rs 5,00,000 | Default rate: 12% | Loss given default: 60%
-- **Without model:** Expected monthly loss = Rs 3.6 Cr (120 defaults x Rs 3L loss each)
-- **With model (85% recall):** Catches ~102 of 120 defaults
-- **Net loss reduction:** ~Rs 3.06 Cr/month
-- **Annual savings estimate:** ~Rs 36 Cr on a 1000-application/month portfolio
+# Run both with Docker
+docker-compose up
+```
 
-### Decision Framework
+---
 
-| Risk Score | Decision | Business Rationale |
-|-----------|----------|--------------------|
-| < 30% | Approve | Low default probability, revenue opportunity |
-| 30-60% | Manual Review | Borderline — human judgment required |
-| > 60% | Reject | High default risk, capital preservation |
+## Supabase Setup (for persistent storage)
 
-### Regulatory Alignment
-- **ECOA (Equal Credit Opportunity Act):** Adverse action notices generated for every rejection with specific reasons
-- **FCRA (Fair Credit Reporting Act):** Applicants informed of their right to know reasons for denial
-- **Basel II Expected Loss Framework:** Cost-benefit tracker uses EL = PD x LGD x EAD methodology
-- **RBI Guidelines:** Model decisions contextualized with live RBI repo rate and NPA data
+1. Create free project at supabase.com
+2. Run `db/schema.sql` in the SQL Editor
+3. Add to environment or Streamlit secrets:
+```
+SUPABASE_URL=https://your-project.supabase.co
+SUPABASE_KEY=your-service-role-key
+API_SECRET_KEY=your-strong-random-key
+```
 
-### Stakeholder Value
+---
 
-| Stakeholder | Value Delivered |
-|-------------|----------------|
-| Loan Officers | Instant risk score + explanation, reducing cognitive load |
-| Risk Managers | Threshold tuning, model comparison, drift monitoring |
-| Compliance Teams | Audit trail, PII-masked logs, adverse action notices |
-| Business Leaders | Cost-benefit P&L simulation, approval rate analytics |
-| Data Scientists | SHAP/LIME explainability, feedback loop for retraining |
+## API Usage
+
+```bash
+# Single prediction
+curl -X POST http://localhost:8000/api/v1/predict \
+  -H "x-api-key: your-key" \
+  -H "Content-Type: application/json" \
+  -d '{"income_lpa": 10, "age_years": 30, "experience_years": 5}'
+
+# Batch prediction
+curl -X POST http://localhost:8000/api/v1/predict/batch \
+  -H "x-api-key: your-key" \
+  -d '{"applicants": [{"income_lpa": 10, "age_years": 30, "experience_years": 5}]}'
+```
+
+---
+
+## Deploy
+
+```bash
+git add .
+git commit -m "your message"
+git push
+```
+
+Streamlit Cloud auto-redeploys on push. For API, deploy to Railway/Render using the Dockerfile.
 
 ---
 
@@ -161,30 +233,6 @@ Indian banks and NBFCs lose billions annually to loan defaults. Manual credit as
 - LightGBM: https://papers.nips.cc/paper/2017/hash/6449f44a102fde848669bdd9eb6b76fa-Abstract.html
 - SHAP: https://papers.nips.cc/paper/2017/hash/8a20a8621978632d76c43dfd28b67767-Abstract.html
 - LIME: https://arxiv.org/abs/1602.04938
-- Metrics: https://scikit-learn.org/stable/modules/model_evaluation.html
-- Compliance: https://www.bis.org/publ/bcbs128.htm
-- Live Data: https://data.worldbank.org
-
----
-
-## Run Locally
-
-```bash
-pip install -r requirements.txt
-streamlit run app/app.py
-```
-
----
-
-## Deploy to Streamlit Cloud
-
-1. Push to GitHub
-2. Go to streamlit.io/cloud -> New app
-3. Set main file: `app/app.py`
-4. Click Deploy
-
-```bash
-git add .
-git commit -m "your message"
-git push
-```
+- Basel II: https://www.bis.org/publ/bcbs128.htm
+- World Bank: https://data.worldbank.org
+- scikit-learn: https://scikit-learn.org/stable/modules/model_evaluation.html

@@ -1,23 +1,30 @@
 # Python cache
 __pycache__/
 *.pyc
+*.pyo
 
 # Virtual environment
 venv/
-.env/
+.env
+.env.local
 
 # Jupyter
 .ipynb_checkpoints/
 
 # OS files
 .DS_Store
+Thumbs.db
 
-# Logs
+# Logs and data outputs
 *.log
+data/predictions.csv
+data/feedback_log.csv
+data/audit_log.csv
+data/usage_log.csv
 
 # Streamlit secrets (never commit real keys)
 .streamlit/secrets.toml
 
-# allow model files
+# Allow model files
 !models/model.pkl
 !models/columns.json

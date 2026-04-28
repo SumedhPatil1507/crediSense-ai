@@ -17,11 +17,11 @@ from src.data_loader import load_data
 from src.preprocessing import clean_data
 from src.feature_engineering import create_features
 from src.evaluate import evaluate, threshold_analysis, compare_models
-from src.feedback import log_prediction, log_feedback
-from src.validation import validate_inputs, audit_log, mask_pii
+from src.database import log_prediction, log_feedback, log_audit, db_status
 from src.confidence_intervals import bootstrap_ci, interpret_ci
 from src.adverse_action import generate_adverse_action
 from src.report import generate_pdf_report, FPDF_AVAILABLE
+from src.config import THRESHOLD_APPROVE, THRESHOLD_REVIEW
 
 model = joblib.load(BASE_DIR / "models/model.pkl")
 with open(BASE_DIR / "models/columns.json") as f:
@@ -34,84 +34,106 @@ def load_dataset():
     df = create_features(df)
     return df
 
+def normalize(income_lpa, age_years, exp_years):
+    return (min(income_lpa / 50.0, 1.0),
+            (age_years - 18) / 52.0,
+            min(exp_years / 40.0, 1.0))
+
 st.set_page_config(layout="wide")
 st.title("💳 Loan Risk Prediction")
 
-# Onboarding walkthrough
+# Onboarding
 if "onboarded" not in st.session_state:
-    with st.expander("👋 Welcome to CrediSense AI — Quick Start Guide", expanded=True):
+    with st.expander("👋 Quick Start Guide", expanded=True):
         st.markdown("""
-        **How to use this system:**
-        1. **Predict tab** — adjust the sliders and click Predict to get a risk score with confidence interval
-        2. **Model Performance tab** — view ROC-AUC, Gini, KS, calibration curves (auto-loaded)
-        3. **What-If Simulator** — explore how changing inputs affects the risk score
-        4. **Model Comparison** — see LightGBM vs Logistic Regression vs Random Forest
-        5. **Threshold Analysis** — tune the decision cutoff for your risk appetite
-
-        **Normalization guide:** Income = LPA/50 · Age = (age−18)/52 · Experience = years/40
+        1. **Predict** — enter real applicant values (LPA, age, years) and get a risk score
+        2. **What-If Simulator** — compare two scenarios side by side
+        3. **Model Performance** — ROC-AUC, Gini, KS, calibration (auto-loaded)
+        4. **Model Comparison** — LightGBM vs baselines
+        5. **Threshold Analysis** — tune the decision cutoff
         """)
-        if st.button("Got it — let's start"):
+        if st.button("Got it"):
             st.session_state["onboarded"] = True
             st.rerun()
+
+# DB status badge
+db = db_status()
+st.caption(f"DB: {'🟢 Supabase' if db['backend'] == 'supabase' else '🟡 CSV fallback (set SUPABASE_URL + SUPABASE_KEY for persistence)'}")
 
 tabs = st.tabs(["🔮 Predict", "🔬 What-If Simulator", "📈 Model Performance",
                 "🏆 Model Comparison", "⚙️ Threshold Analysis"])
 
 # ── TAB 1: Predict ─────────────────────────────────────────────────────────────
 with tabs[0]:
-    col1, col2 = st.columns(2)
-    with col1:
-        income = st.slider("Income (normalized 0–1)", 0.0, 1.0, 0.5,
-                           help="LPA ÷ 50. e.g. 10 LPA → 0.20")
-        age    = st.slider("Age (normalized 0–1)", 0.0, 1.0, 0.3,
-                           help="(age − 18) ÷ 52. e.g. 30 yrs → 0.23")
-    with col2:
-        exp    = st.slider("Experience (normalized 0–1)", 0.0, 1.0, 0.2,
-                           help="Years ÷ 40. e.g. 5 yrs → 0.125")
-        st.caption("**Normalization:** Income = LPA/50 · Age = (age−18)/52 · Exp = years/40")
+    st.subheader("Applicant Details")
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        income_lpa = st.number_input("Annual Income (LPA)", min_value=0.5, max_value=500.0,
+                                      value=8.0, step=0.5, help="Lakhs Per Annum")
+        profession = st.selectbox("Profession", ["Engineer", "Doctor", "Lawyer", "Teacher",
+                                                   "Accountant", "Manager", "Analyst", "Other"])
+    with c2:
+        age_years = st.number_input("Age (years)", min_value=18, max_value=70, value=30)
+        house_own = st.selectbox("House Ownership", ["owned", "rented", "norent_noown"])
+    with c3:
+        exp_years = st.number_input("Work Experience (years)", min_value=0, max_value=45, value=5)
+        marital   = st.selectbox("Marital Status", ["single", "married"])
 
-    if st.button("🚀 Predict", use_container_width=True):
-        # Input validation
-        errors = validate_inputs(income, age, exp)
-        if errors:
-            for e in errors:
-                st.error(f"⚠️ {e}")
+    c4, c5, c6 = st.columns(3)
+    with c4:
+        car_own = st.selectbox("Car Ownership", ["no", "yes"])
+    with c5:
+        job_yrs  = st.number_input("Years in Current Job", min_value=0, max_value=40, value=2)
+    with c6:
+        house_yrs = st.number_input("Years in Current House", min_value=0, max_value=40, value=3)
+
+    if st.button("🚀 Assess Risk", use_container_width=True):
+        if exp_years >= age_years - 16:
+            st.error("Experience cannot exceed working age.")
             st.stop()
 
-        user_input = {"Income": income, "Age": age, "Experience": exp}
+        income_n, age_n, exp_n = normalize(income_lpa, age_years, exp_years)
+        age_group = "Young" if age_n < 0.3 else "Senior" if age_n > 0.7 else "Middle"
+
+        user_input = {
+            "Income": income_n, "Age": age_n, "Experience": exp_n,
+            "CURRENT_JOB_YRS": job_yrs, "CURRENT_HOUSE_YRS": house_yrs,
+            "House_Ownership": house_own, "Married/Single": marital,
+            "Car_Ownership": car_own, "Profession": profession,
+            "CITY": "Mumbai", "STATE": "Maharashtra", "age_group": age_group,
+        }
         df_input = build_full_input(user_input, cols)
 
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
-            prob = model.predict_proba(df_input)[0][1]
+            prob = float(model.predict_proba(df_input)[0][1])
 
-        # Bootstrap confidence interval
         with st.spinner("Computing confidence interval..."):
             _, ci_lower, ci_upper = bootstrap_ci(model, df_input, n_bootstrap=150)
 
-        safe_prob = 1 - prob
-        decision = "Approve" if prob < 0.3 else "Manual Review" if prob < 0.6 else "Reject"
-        margin = abs(prob - 0.5)
+        decision   = "Approve" if prob < THRESHOLD_APPROVE else "Manual Review" if prob < THRESHOLD_REVIEW else "Reject"
+        margin     = abs(prob - 0.5)
         confidence = "High" if margin > 0.3 else "Medium" if margin > 0.15 else "Low (borderline)"
-        ci_note = interpret_ci(ci_lower, ci_upper)
+        ci_note    = interpret_ci(ci_lower, ci_upper)
 
-        st.session_state["last_pred"] = dict(income=income, age=age, exp=exp,
-                                              prob=prob, decision=decision,
-                                              confidence=confidence,
-                                              ci_lower=ci_lower, ci_upper=ci_upper)
+        st.session_state["last_pred"] = dict(
+            income_lpa=income_lpa, age_years=age_years, exp_years=exp_years,
+            income_n=income_n, age_n=age_n, exp_n=exp_n,
+            prob=prob, decision=decision, confidence=confidence,
+            ci_lower=ci_lower, ci_upper=ci_upper
+        )
 
         # KPIs
         k1, k2, k3, k4, k5 = st.columns(5)
-        k1.metric("Default Risk", f"{prob:.2%}")
-        k2.metric("Safe Probability", f"{safe_prob:.2%}")
-        k3.metric("95% CI Lower", f"{ci_lower:.2%}")
-        k4.metric("95% CI Upper", f"{ci_upper:.2%}")
-        k5.metric("Confidence", confidence)
-
-        st.caption(f"📊 CI interpretation: {ci_note}")
+        k1.metric("Default Risk",      f"{prob:.2%}")
+        k2.metric("Safe Probability",  f"{1-prob:.2%}")
+        k3.metric("95% CI",            f"[{ci_lower:.1%}, {ci_upper:.1%}]")
+        k4.metric("Confidence",        confidence)
+        k5.metric("Decision",          decision)
+        st.caption(f"CI: {ci_note}")
 
         # Gauge
-        conf_color = "green" if prob < 0.3 else "orange" if prob < 0.6 else "red"
+        conf_color = "#28a745" if prob < THRESHOLD_APPROVE else "#ffc107" if prob < THRESHOLD_REVIEW else "#dc3545"
         gauge = go.Figure(go.Indicator(
             mode="gauge+number",
             value=prob * 100,
@@ -126,151 +148,132 @@ with tabs[0]:
                 ],
                 "threshold": {"line": {"color": "black", "width": 3}, "value": 50}
             },
-            title={"text": f"Risk Score · 95% CI: [{ci_lower:.1%}, {ci_upper:.1%}]"}
+            title={"text": f"Risk Score | 95% CI: [{ci_lower:.1%}, {ci_upper:.1%}]"}
         ))
         st.plotly_chart(gauge, use_container_width=True)
 
-        if decision == "Approve":
-            st.success(f"✅ Decision: {decision}")
-        elif decision == "Manual Review":
-            st.warning(f"🔍 Decision: {decision}")
-        else:
-            st.error(f"❌ Decision: {decision}")
+        if decision == "Approve":   st.success(f"✅ Decision: {decision}")
+        elif decision == "Manual Review": st.warning(f"🔍 Decision: {decision}")
+        else:                        st.error(f"❌ Decision: {decision}")
 
         # Explanation
         drivers = []
-        if income < 0.3: drivers.append("below-average income")
-        if exp < 0.2:    drivers.append("limited work experience")
-        if age < 0.2:    drivers.append("young applicant profile")
-        if income > 0.7 and exp > 0.5: drivers.append("strong income & experience")
+        if income_lpa < 5:   drivers.append(f"low income ({income_lpa} LPA)")
+        if exp_years < 2:    drivers.append("limited work experience")
+        if age_years < 25:   drivers.append("young applicant")
+        if income_lpa > 20 and exp_years > 8: drivers.append("strong income and experience")
         driver_text = f" Key factors: {', '.join(drivers)}." if drivers else ""
-        risk_label = "low" if prob < 0.3 else "moderate" if prob < 0.6 else "high"
-        explanation = (f"This applicant has a {risk_label} default risk ({prob:.1%}).{driver_text} "
-                       f"Recommendation: {decision}.")
+        risk_label  = "low" if prob < THRESHOLD_APPROVE else "moderate" if prob < THRESHOLD_REVIEW else "high"
+        explanation = f"This applicant has a {risk_label} default risk ({prob:.1%}).{driver_text} Recommendation: {decision}."
         st.info(explanation)
 
-        # Adverse Action Notice
-        adverse = generate_adverse_action(prob, income, age, exp)
+        # Adverse action
+        adverse = generate_adverse_action(prob, income_n, age_n, exp_n)
         if adverse["required"]:
             st.markdown("---")
-            st.subheader("⚖️ Adverse Action Notice")
+            st.subheader("Adverse Action Notice")
             st.warning(adverse["notice"])
             st.caption(adverse["citation"])
 
-        # PDF Report
-        st.markdown("---")
+        # PDF
         if FPDF_AVAILABLE:
-            pdf_bytes = generate_pdf_report(
-                income, age, exp, prob, decision, confidence,
-                ci_lower, ci_upper, explanation, adverse
-            )
+            pdf_bytes = generate_pdf_report(income_n, age_n, exp_n, prob, decision,
+                                             confidence, ci_lower, ci_upper, explanation, adverse)
             if pdf_bytes:
                 st.download_button("📄 Download PDF Report", pdf_bytes,
-                                   file_name="credisense_report.pdf",
-                                   mime="application/pdf")
-        else:
-            st.caption("Install `fpdf2` to enable PDF report generation.")
+                                   "credisense_report.pdf", "application/pdf")
 
-        # Audit + usage log (PII masked)
-        audit_log("PREDICTION", income, age, exp,
+        # Log
+        from src.validation import hash_input
+        pred_id = log_prediction(income_lpa, age_years, exp_years,
+                                  income_n, age_n, exp_n, prob, ci_lower, ci_upper,
+                                  decision, confidence, page="Streamlit")
+        log_audit("PREDICT", hash_input(income_n, age_n, exp_n),
                   details=f"decision={decision} prob={prob:.4f}")
-        log_prediction(income, age, exp, prob, decision, page="Model")
 
-        st.caption("📚 Model: LightGBM · [Kaggle Dataset](https://www.kaggle.com/datasets/subhamjain/loan-prediction-based-on-customer-behavior) · "
-                   "[scikit-learn](https://scikit-learn.org) · [World Bank](https://data.worldbank.org)")
+        st.caption("Dataset: [Kaggle](https://www.kaggle.com/datasets/subhamjain/loan-prediction-based-on-customer-behavior) | "
+                   "Model: [LightGBM NeurIPS 2017](https://papers.nips.cc/paper/2017/hash/6449f44a102fde848669bdd9eb6b76fa-Abstract.html)")
 
     # Feedback
     if "last_pred" in st.session_state:
         st.markdown("---")
-        st.subheader("📣 Analyst Feedback")
+        st.subheader("Analyst Feedback")
         p = st.session_state["last_pred"]
-        fb_col1, fb_col2 = st.columns(2)
-        with fb_col1:
+        fb_c1, fb_c2 = st.columns(2)
+        with fb_c1:
             feedback = st.radio("Was this prediction correct?",
-                                ["👍 Correct", "👎 Incorrect", "🤔 Unsure"], horizontal=True)
-        with fb_col2:
+                                ["correct", "incorrect", "unsure"], horizontal=True)
+        with fb_c2:
             corrected = st.selectbox("Correct label:", ["", "Should be Approve",
                                                          "Should be Reject", "Should be Review"])
         notes = st.text_input("Notes:", placeholder="Optional context")
         if st.button("Submit Feedback"):
-            log_feedback(p["income"], p["age"], p["exp"], p["prob"],
-                         p["decision"], feedback, corrected, notes)
-            audit_log("FEEDBACK", p["income"], p["age"], p["exp"],
-                      details=f"feedback={feedback}")
-            st.success("✅ Feedback recorded.")
+            pred_id = st.session_state.get("last_pred_id", "unknown")
+            log_feedback(pred_id, feedback, corrected, notes)
+            st.success("Feedback recorded.")
 
 # ── TAB 2: What-If Simulator ───────────────────────────────────────────────────
 with tabs[1]:
-    st.subheader("🔬 What-If Scenario Simulator")
-    st.caption("Explore how changing applicant inputs affects the risk score.")
+    st.subheader("What-If Scenario Simulator")
+    st.caption("Compare two applicant profiles side by side.")
 
-    wif_col1, wif_col2 = st.columns(2)
-    with wif_col1:
-        st.markdown("**Baseline**")
-        base_income = st.slider("Base Income", 0.0, 1.0, 0.4, key="wi_inc")
-        base_age    = st.slider("Base Age",    0.0, 1.0, 0.3, key="wi_age")
-        base_exp    = st.slider("Base Exp",    0.0, 1.0, 0.2, key="wi_exp")
-    with wif_col2:
-        st.markdown("**Scenario**")
-        sc_income = st.slider("Scenario Income", 0.0, 1.0, 0.6, key="sc_inc")
-        sc_age    = st.slider("Scenario Age",    0.0, 1.0, 0.3, key="sc_age")
-        sc_exp    = st.slider("Scenario Exp",    0.0, 1.0, 0.4, key="sc_exp")
+    wc1, wc2 = st.columns(2)
+    scenarios = {}
+    for label, col in [("Baseline", wc1), ("Scenario", wc2)]:
+        with col:
+            st.markdown(f"**{label}**")
+            inc = st.number_input(f"Income LPA ({label})", 0.5, 500.0, 6.0 if label=="Baseline" else 15.0, key=f"wi_{label}_inc")
+            ag  = st.number_input(f"Age ({label})", 18, 70, 28 if label=="Baseline" else 35, key=f"wi_{label}_age")
+            ex  = st.number_input(f"Experience ({label})", 0, 45, 3 if label=="Baseline" else 10, key=f"wi_{label}_exp")
+            scenarios[label] = (inc, ag, ex)
 
-    if st.button("▶ Compare Scenarios"):
+    if st.button("Compare"):
         results = []
-        for label, inc, ag, ex in [("Baseline", base_income, base_age, base_exp),
-                                    ("Scenario", sc_income, sc_age, sc_exp)]:
-            df_w = build_full_input({"Income": inc, "Age": ag, "Experience": ex}, cols)
+        for label, (inc, ag, ex) in scenarios.items():
+            inc_n, age_n, exp_n = normalize(inc, ag, ex)
+            df_w = build_full_input({"Income": inc_n, "Age": age_n, "Experience": exp_n}, cols)
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore")
-                p = model.predict_proba(df_w)[0][1]
-            dec = "Approve" if p < 0.3 else "Review" if p < 0.6 else "Reject"
-            results.append({"Scenario": label, "Income": inc, "Age": ag,
-                             "Experience": ex, "Risk %": f"{p:.2%}", "Decision": dec,
-                             "_prob": p})
+                p = float(model.predict_proba(df_w)[0][1])
+            dec = "Approve" if p < THRESHOLD_APPROVE else "Review" if p < THRESHOLD_REVIEW else "Reject"
+            results.append({"Scenario": label, "Income (LPA)": inc, "Age": ag,
+                             "Experience (yrs)": ex, "Risk %": f"{p:.2%}", "Decision": dec, "_p": p})
 
         df_res = pd.DataFrame(results)
-        st.dataframe(df_res.drop(columns=["_prob"]), use_container_width=True)
+        st.dataframe(df_res.drop(columns=["_p"]), use_container_width=True)
+        delta = results[1]["_p"] - results[0]["_p"]
+        if delta < 0:   st.success(f"Scenario reduces risk by {abs(delta):.2%}")
+        elif delta > 0: st.error(f"Scenario increases risk by {delta:.2%}")
+        else:           st.info("No change in risk.")
 
-        delta = results[1]["_prob"] - results[0]["_prob"]
-        if delta < 0:
-            st.success(f"✅ Scenario reduces risk by {abs(delta):.2%}")
-        elif delta > 0:
-            st.error(f"⚠️ Scenario increases risk by {delta:.2%}")
-        else:
-            st.info("No change in risk score.")
-
-        fig_wif = go.Figure()
-        fig_wif.add_trace(go.Bar(
+        fig = go.Figure(go.Bar(
             x=["Baseline", "Scenario"],
-            y=[results[0]["_prob"], results[1]["_prob"]],
+            y=[results[0]["_p"], results[1]["_p"]],
             marker_color=["royalblue", "darkorange"],
-            text=[f"{results[0]['_prob']:.2%}", f"{results[1]['_prob']:.2%}"],
+            text=[f"{results[0]['_p']:.2%}", f"{results[1]['_p']:.2%}"],
             textposition="outside"
         ))
-        fig_wif.update_layout(yaxis_title="Default Probability", yaxis_range=[0, 1],
-                               title="Baseline vs Scenario Risk", height=350)
-        st.plotly_chart(fig_wif, use_container_width=True)
+        fig.update_layout(yaxis_title="Default Probability", yaxis_range=[0, 1], height=350)
+        st.plotly_chart(fig, use_container_width=True)
 
 # ── TAB 3: Model Performance ───────────────────────────────────────────────────
 with tabs[2]:
-    st.caption("Auto-loaded from repo — no upload needed.")
+    st.caption("Auto-loaded from repo.")
     with st.spinner("Evaluating..."):
         try:
             from sklearn.model_selection import train_test_split
             df_eval = load_dataset()
             X_eval = df_eval.drop(columns=["Risk_Flag"])
             y_eval = df_eval["Risk_Flag"]
-            _, X_test, _, y_test = train_test_split(
-                X_eval, y_eval, test_size=0.2, stratify=y_eval, random_state=42)
+            _, X_test, _, y_test = train_test_split(X_eval, y_eval, test_size=0.2, stratify=y_eval, random_state=42)
             m = evaluate(model, X_test, y_test)
 
-            k1, k2, k3, k4, k5 = st.columns(5)
+            k1,k2,k3,k4,k5 = st.columns(5)
             k1.metric("ROC-AUC", m["AUC"])
-            k2.metric("PR-AUC", m["PR_AUC"])
-            k3.metric("Gini", m["Gini"])
+            k2.metric("PR-AUC",  m["PR_AUC"])
+            k3.metric("Gini",    m["Gini"])
             k4.metric("KS Stat", m["KS"])
-            k5.metric("Brier Score", m["Brier"])
+            k5.metric("Brier",   m["Brier"])
             st.caption("KS & Gini are standard credit-scoring metrics. Lower Brier = better calibration.")
             st.markdown("---")
 
@@ -279,94 +282,63 @@ with tabs[2]:
             st.dataframe(report_df.style.format("{:.3f}"), use_container_width=True)
             st.markdown("---")
 
-            col_roc, col_cm = st.columns(2)
-            with col_roc:
+            c_roc, c_cm = st.columns(2)
+            with c_roc:
                 fpr, tpr, _ = m["roc_curve"]
                 fig_roc = go.Figure()
-                fig_roc.add_trace(go.Scatter(x=fpr, y=tpr, name=f"LightGBM AUC={m['AUC']}",
-                                              line=dict(color="royalblue", width=2)))
-                fig_roc.add_trace(go.Scatter(x=[0,1], y=[0,1], name="Random",
-                                              line=dict(dash="dash", color="gray")))
-                fig_roc.update_layout(title="ROC Curve", xaxis_title="FPR",
-                                      yaxis_title="TPR", height=350)
+                fig_roc.add_trace(go.Scatter(x=fpr, y=tpr, name=f"LightGBM AUC={m['AUC']}", line=dict(color="royalblue", width=2)))
+                fig_roc.add_trace(go.Scatter(x=[0,1], y=[0,1], name="Random", line=dict(dash="dash", color="gray")))
+                fig_roc.update_layout(title="ROC Curve", xaxis_title="FPR", yaxis_title="TPR", height=350)
                 st.plotly_chart(fig_roc, use_container_width=True)
 
-            with col_cm:
+            with c_cm:
                 cm = np.array(m["confusion_matrix"])
-                fig_cm = px.imshow(cm, text_auto=True,
-                                   labels=dict(x="Predicted", y="Actual"),
-                                   x=["Safe (0)", "Risk (1)"], y=["Safe (0)", "Risk (1)"],
-                                   color_continuous_scale="Blues",
-                                   title="Confusion Matrix")
+                fig_cm = px.imshow(cm, text_auto=True, labels=dict(x="Predicted", y="Actual"),
+                                   x=["Safe","Risk"], y=["Safe","Risk"],
+                                   color_continuous_scale="Blues", title="Confusion Matrix")
                 fig_cm.update_layout(height=350)
                 st.plotly_chart(fig_cm, use_container_width=True)
 
-            col_pr, col_cal = st.columns(2)
-            with col_pr:
+            c_pr, c_cal = st.columns(2)
+            with c_pr:
                 prec, rec, _ = m["pr_curve"]
                 fig_pr = go.Figure()
-                fig_pr.add_trace(go.Scatter(x=rec, y=prec, name=f"PR-AUC={m['PR_AUC']}",
-                                             line=dict(color="darkorange", width=2)))
-                fig_pr.update_layout(title="Precision-Recall Curve",
-                                     xaxis_title="Recall", yaxis_title="Precision", height=350)
+                fig_pr.add_trace(go.Scatter(x=rec, y=prec, name=f"PR-AUC={m['PR_AUC']}", line=dict(color="darkorange", width=2)))
+                fig_pr.update_layout(title="Precision-Recall Curve", xaxis_title="Recall", yaxis_title="Precision", height=350)
                 st.plotly_chart(fig_pr, use_container_width=True)
 
-            with col_cal:
+            with c_cal:
                 frac_pos, mean_pred = m["calibration"]
                 fig_cal = go.Figure()
-                fig_cal.add_trace(go.Scatter(x=mean_pred, y=frac_pos, name="Model",
-                                              mode="lines+markers", line=dict(color="green")))
-                fig_cal.add_trace(go.Scatter(x=[0,1], y=[0,1], name="Perfect",
-                                              line=dict(dash="dash", color="gray")))
-                fig_cal.update_layout(title="Calibration Curve",
-                                      xaxis_title="Mean Predicted Prob",
-                                      yaxis_title="Fraction Positives", height=350)
+                fig_cal.add_trace(go.Scatter(x=mean_pred, y=frac_pos, name="Model", mode="lines+markers", line=dict(color="green")))
+                fig_cal.add_trace(go.Scatter(x=[0,1], y=[0,1], name="Perfect", line=dict(dash="dash", color="gray")))
+                fig_cal.update_layout(title="Calibration Curve", xaxis_title="Mean Predicted Prob", yaxis_title="Fraction Positives", height=350)
                 st.plotly_chart(fig_cal, use_container_width=True)
 
-            st.caption("📚 [scikit-learn metrics docs](https://scikit-learn.org/stable/modules/model_evaluation.html) · "
-                       "[LightGBM paper NeurIPS 2017](https://papers.nips.cc/paper/2017/hash/6449f44a102fde848669bdd9eb6b76fa-Abstract.html)")
         except Exception as e:
             st.error(f"Error: {e}")
 
 # ── TAB 4: Model Comparison ────────────────────────────────────────────────────
 with tabs[3]:
-    if st.button("▶ Run Model Comparison"):
-        with st.spinner("Training baseline models (~30s)..."):
+    if st.button("Run Model Comparison"):
+        with st.spinner("Training baselines (~30s)..."):
             try:
                 from sklearn.model_selection import train_test_split
                 from sklearn.linear_model import LogisticRegression
                 from sklearn.ensemble import RandomForestClassifier
                 from sklearn.pipeline import Pipeline
                 from src.encoding import build_preprocessor
-
                 df_c = load_dataset()
-                X_c = df_c.drop(columns=["Risk_Flag"])
-                y_c = df_c["Risk_Flag"]
-                X_tr, X_te, y_tr, y_te = train_test_split(
-                    X_c, y_c, test_size=0.2, stratify=y_c, random_state=42)
-                lr = Pipeline([("pre", build_preprocessor(X_tr)),
-                                ("m", LogisticRegression(class_weight="balanced",
-                                                          max_iter=300, random_state=42))])
-                rf = Pipeline([("pre", build_preprocessor(X_tr)),
-                                ("m", RandomForestClassifier(n_estimators=100,
-                                                              class_weight="balanced",
-                                                              random_state=42, n_jobs=-1))])
-                lr.fit(X_tr, y_tr)
-                rf.fit(X_tr, y_tr)
-                results = compare_models(
-                    {"Logistic Regression": lr, "Random Forest": rf, "LightGBM": model},
-                    X_te, y_te)
+                X_c = df_c.drop(columns=["Risk_Flag"]); y_c = df_c["Risk_Flag"]
+                X_tr, X_te, y_tr, y_te = train_test_split(X_c, y_c, test_size=0.2, stratify=y_c, random_state=42)
+                lr = Pipeline([("pre", build_preprocessor(X_tr)), ("m", LogisticRegression(class_weight="balanced", max_iter=300, random_state=42))])
+                rf = Pipeline([("pre", build_preprocessor(X_tr)), ("m", RandomForestClassifier(n_estimators=100, class_weight="balanced", random_state=42, n_jobs=-1))])
+                lr.fit(X_tr, y_tr); rf.fit(X_tr, y_tr)
+                results = compare_models({"Logistic Regression": lr, "Random Forest": rf, "LightGBM": model}, X_te, y_te)
                 df_comp = pd.DataFrame(results)
-                st.dataframe(
-                    df_comp.style
-                    .highlight_max(subset=["ROC-AUC","PR-AUC","Gini","KS","F1"], color="#d4edda")
-                    .highlight_min(subset=["Brier"], color="#d4edda")
-                    .format("{:.4f}", subset=df_comp.columns[1:]),
-                    use_container_width=True)
-                fig_bar = px.bar(df_comp, x="Model", y="ROC-AUC", color="Model",
-                                  title="ROC-AUC Comparison", text_auto=".4f")
+                st.dataframe(df_comp.style.highlight_max(subset=["ROC-AUC","PR-AUC","Gini","KS","F1"], color="#d4edda").highlight_min(subset=["Brier"], color="#d4edda").format("{:.4f}", subset=df_comp.columns[1:]), use_container_width=True)
+                fig_bar = px.bar(df_comp, x="Model", y="ROC-AUC", color="Model", title="ROC-AUC Comparison", text_auto=".4f")
                 st.plotly_chart(fig_bar, use_container_width=True)
-                st.caption("📚 [LightGBM paper](https://papers.nips.cc/paper/2017/hash/6449f44a102fde848669bdd9eb6b76fa-Abstract.html)")
             except Exception as e:
                 st.error(f"Error: {e}")
 
@@ -376,23 +348,15 @@ with tabs[4]:
         try:
             from sklearn.model_selection import train_test_split
             df_t = load_dataset()
-            X_t = df_t.drop(columns=["Risk_Flag"])
-            y_t = df_t["Risk_Flag"]
-            _, X_te_t, _, y_te_t = train_test_split(
-                X_t, y_t, test_size=0.2, stratify=y_t, random_state=42)
+            X_t = df_t.drop(columns=["Risk_Flag"]); y_t = df_t["Risk_Flag"]
+            _, X_te_t, _, y_te_t = train_test_split(X_t, y_t, test_size=0.2, stratify=y_t, random_state=42)
             y_prob_t = model.predict_proba(X_te_t)[:, 1]
             results = threshold_analysis(y_te_t, y_prob_t)
             df_thresh = pd.DataFrame(results)
-
             fig_thresh = go.Figure()
-            for col_name, color in [("precision","blue"),("recall","red"),
-                                     ("f1","green"),("approval_rate","orange")]:
-                fig_thresh.add_trace(go.Scatter(
-                    x=df_thresh["threshold"], y=df_thresh[col_name],
-                    name=col_name.capitalize(), line=dict(color=color)))
-            fig_thresh.update_layout(xaxis_title="Decision Threshold",
-                                      yaxis_title="Score", height=400,
-                                      title="Threshold vs Business Metrics")
+            for col_name, color in [("precision","blue"),("recall","red"),("f1","green"),("approval_rate","orange")]:
+                fig_thresh.add_trace(go.Scatter(x=df_thresh["threshold"], y=df_thresh[col_name], name=col_name.capitalize(), line=dict(color=color)))
+            fig_thresh.update_layout(xaxis_title="Threshold", yaxis_title="Score", height=400, title="Threshold vs Business Metrics")
             st.plotly_chart(fig_thresh, use_container_width=True)
             st.dataframe(df_thresh.style.format("{:.3f}"), use_container_width=True)
         except Exception as e:

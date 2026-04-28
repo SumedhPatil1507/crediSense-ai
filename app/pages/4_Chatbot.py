@@ -128,12 +128,14 @@ with tabs[0]:
         fb_c1, fb_c2 = st.columns(2)
         with fb_c1:
             feedback = st.radio("Was this prediction correct?",
-                                ["correct", "incorrect", "unsure"], horizontal=True)
+                                ["correct", "incorrect", "unsure"],
+                                horizontal=True, key="chatbot_fb_radio")
         with fb_c2:
             corrected = st.selectbox("Correct label:", ["", "Should be Approve",
-                                                         "Should be Reject", "Should be Review"])
-        notes = st.text_input("Notes:", placeholder="Optional context")
-        if st.button("Submit Feedback"):
+                                                         "Should be Reject", "Should be Review"],
+                                     key="chatbot_fb_select")
+        notes = st.text_input("Notes:", placeholder="Optional context", key="chatbot_fb_notes")
+        if st.button("Submit Feedback", key="chatbot_fb_submit"):
             log_feedback("chatbot", feedback, corrected, notes)
             st.success("Feedback recorded.")
 

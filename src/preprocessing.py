@@ -5,4 +5,7 @@ def clean_data(df):
         if col in df.columns:
             df[col] = df[col].astype(float).round().astype(int)
 
+    if 'Id' in df.columns:
+        df = df.drop(columns=['Id'])
+
     return df

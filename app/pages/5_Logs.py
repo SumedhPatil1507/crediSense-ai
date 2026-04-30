@@ -14,7 +14,7 @@ st.set_page_config(layout="wide")
 st.title("📋 Logs, Audit & Analytics")
 
 db = db_status()
-st.caption(f"Storage: {'🟢 Supabase (persistent across redeploys)' if db['backend'] == 'supabase' else '🟡 CSV fallback — set SUPABASE_URL + SUPABASE_KEY for persistence'}")
+st.caption(f"Storage: 🟢 Premium Local SQLite (Zero-Config, fully persistent database at `{db['db_path']}`)")
 
 tabs = st.tabs(["📊 Usage Logs", "📣 Feedback", "🔐 Audit Log",
                 "💰 Cost-Benefit Tracker", "📈 Performance Monitor"])

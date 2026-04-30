@@ -1,11 +1,12 @@
-import streamlit as st
-from src.model_registry import get_active_version, get_current_model_hash
-from src.database import db_status
-from src.hitl_queue import queue_stats
 import sys
 from pathlib import Path
 BASE_DIR = Path(__file__).resolve().parents[1]
 sys.path.append(str(BASE_DIR))
+
+import streamlit as st
+from src.model_registry import get_active_version, get_current_model_hash
+from src.database import db_status
+from src.hitl_queue import queue_stats
 
 st.set_page_config(page_title="CrediSense AI", layout="wide", page_icon="💳")
 

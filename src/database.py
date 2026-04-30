@@ -8,6 +8,7 @@ Supabase setup:
   3. Set SUPABASE_URL and SUPABASE_KEY in environment / Streamlit secrets
 """
 import json
+import logging
 from datetime import datetime
 from src.config import SUPABASE_URL, SUPABASE_KEY
 
@@ -20,9 +21,8 @@ except Exception:
 
 USING_SUPABASE = _sb is not None
 
-def _check_supabase():
-    if not USING_SUPABASE:
-        raise RuntimeError("Supabase is not configured. Please set SUPABASE_URL and SUPABASE_KEY.")
+def _warn_supabase():
+    logging.warning("Supabase is not configured. Database operations are currently ignored.")
 
 # ── Public API ─────────────────────────────────────────────────────────────────
 
@@ -31,9 +31,12 @@ def log_prediction(income_lpa: float, age_years: int, experience_years: int,
                    risk_prob: float, ci_lower: float, ci_upper: float,
                    decision: str, confidence: str, page: str = "API") -> str:
     """Insert a prediction record. Returns the record ID."""
-    _check_supabase()
     import uuid
     rec_id = str(uuid.uuid4())[:8]
+    if not USING_SUPABASE:
+        _warn_supabase()
+        return rec_id
+        
     row = {
         "id": rec_id,
         "timestamp": datetime.utcnow().isoformat(),
@@ -57,7 +60,10 @@ def log_prediction(income_lpa: float, age_years: int, experience_years: int,
 def log_feedback(prediction_id: str, feedback: str,
                  corrected_label: str = "", notes: str = "",
                  user_id: str = "anonymous") -> None:
-    _check_supabase()
+    if not USING_SUPABASE:
+        _warn_supabase()
+        return
+        
     import uuid
     row = {
         "id": str(uuid.uuid4())[:8],
@@ -72,7 +78,10 @@ def log_feedback(prediction_id: str, feedback: str,
 
 def log_audit(event: str, input_hash: str, details: str = "",
               user_id: str = "anonymous") -> None:
-    _check_supabase()
+    if not USING_SUPABASE:
+        _warn_supabase()
+        return
+        
     import uuid
     import hashlib
     row = {
@@ -87,19 +96,25 @@ def log_audit(event: str, input_hash: str, details: str = "",
 
 
 def get_predictions(limit: int = 500) -> list[dict]:
-    _check_supabase()
+    if not USING_SUPABASE:
+        _warn_supabase()
+        return []
     res = _sb.table("predictions").select("*").order("timestamp", desc=True).limit(limit).execute()
     return res.data
 
 
 def get_feedback(limit: int = 500) -> list[dict]:
-    _check_supabase()
+    if not USING_SUPABASE:
+        _warn_supabase()
+        return []
     res = _sb.table("feedback").select("*").order("timestamp", desc=True).limit(limit).execute()
     return res.data
 
 
 def get_audit(limit: int = 500) -> list[dict]:
-    _check_supabase()
+    if not USING_SUPABASE:
+        _warn_supabase()
+        return []
     res = _sb.table("audit_log").select("*").order("timestamp", desc=True).limit(limit).execute()
     return res.data
 

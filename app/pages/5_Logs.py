@@ -14,7 +14,8 @@ st.set_page_config(layout="wide")
 st.title("📋 Logs, Audit & Analytics")
 
 db = db_status()
-st.caption(f"Storage: 🟢 Premium Local SQLite (Zero-Config, fully persistent database at `{db['db_path']}`)")
+db_path_str = db.get('db_path', 'credisense.db')
+st.caption(f"Storage: 🟢 Premium Local SQLite (Zero-Config, fully persistent database at `{db_path_str}`)")
 
 tabs = st.tabs(["📊 Usage Logs", "📣 Feedback", "🔐 Audit Log",
                 "💰 Cost-Benefit Tracker", "📈 Performance Monitor"])

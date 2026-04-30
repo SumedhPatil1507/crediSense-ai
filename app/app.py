@@ -21,8 +21,8 @@ model_hash = get_current_model_hash()
 q_stats = queue_stats()
 
 s1, s2, s3, s4 = st.columns(4)
-s1.metric("DB Backend", "Supabase" if db["backend"] == "supabase" else "CSV Fallback",
-          delta="persistent" if db["backend"] == "supabase" else "ephemeral")
+s1.metric("DB Backend", "SQLite",
+          delta="persistent local DB")
 s2.metric("Model Version", active["version_id"] if active else "Unregistered",
           delta=f"hash: {model_hash}")
 s3.metric("HITL Queue", q_stats["pending"],
@@ -71,4 +71,4 @@ with col_r:
 
 st.sidebar.success("Select a page above")
 st.sidebar.markdown("---")
-st.sidebar.caption("CrediSense AI v1.0 | LightGBM + FastAPI + Supabase")
+st.sidebar.caption("CrediSense AI v1.0 | LightGBM + FastAPI + SQLite")

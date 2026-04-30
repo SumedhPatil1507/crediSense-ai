@@ -6,3 +6,7 @@ textColor = "#262730"
 
 [server]
 maxUploadSize = 200
+
+[runner]
+# Force cache invalidation on redeploy
+magicEnabled = true

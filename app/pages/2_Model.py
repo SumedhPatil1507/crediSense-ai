@@ -58,7 +58,7 @@ if "onboarded" not in st.session_state:
 
 # DB status badge
 db = db_status()
-st.caption(f"DB: {'🟢 Supabase' if db['backend'] == 'supabase' else '🟡 CSV fallback (set SUPABASE_URL + SUPABASE_KEY for persistence)'}")
+st.caption(f"DB: SQLite (persistent local database)")
 
 tabs = st.tabs(["🔮 Predict", "🔬 What-If Simulator", "📈 Model Performance",
                 "🏆 Model Comparison", "⚙️ Threshold Analysis"])
@@ -202,12 +202,14 @@ with tabs[0]:
         fb_c1, fb_c2 = st.columns(2)
         with fb_c1:
             feedback = st.radio("Was this prediction correct?",
-                                ["correct", "incorrect", "unsure"], horizontal=True)
+                                ["correct", "incorrect", "unsure"],
+                                horizontal=True, key="model_fb_radio")
         with fb_c2:
             corrected = st.selectbox("Correct label:", ["", "Should be Approve",
-                                                         "Should be Reject", "Should be Review"])
-        notes = st.text_input("Notes:", placeholder="Optional context")
-        if st.button("Submit Feedback"):
+                                                         "Should be Reject", "Should be Review"],
+                                     key="model_fb_select")
+        notes = st.text_input("Notes:", placeholder="Optional context", key="model_fb_notes")
+        if st.button("Submit Feedback", key="model_fb_submit"):
             pred_id = st.session_state.get("last_pred_id", "unknown")
             log_feedback(pred_id, feedback, corrected, notes)
             st.success("Feedback recorded.")

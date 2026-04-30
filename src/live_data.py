@@ -2,20 +2,12 @@
 Live data module:
 - World Bank API: macro indicators (GDP, unemployment, inflation, NPA)
 - RBI repo rate history
-- RSS news scraper: RBI, Economic Times, Google News (no API key needed)
 All cached to avoid hammering APIs.
 """
 import streamlit as st
 import requests
 import pandas as pd
 from datetime import datetime
-
-try:
-    import feedparser
-    FEEDPARSER_AVAILABLE = True
-except ImportError:
-    FEEDPARSER_AVAILABLE = False
-
 
 # ── World Bank ─────────────────────────────────────────────────────────────────
 
@@ -86,47 +78,3 @@ def get_rbi_repo_rate() -> list[dict]:
         {"date": "2025-02", "rate": 6.25},
         {"date": "2025-04", "rate": 6.00},
     ]
-
-
-# ── News Scraper ───────────────────────────────────────────────────────────────
-
-NEWS_FEEDS = {
-    "RBI Announcements": "https://www.rbi.org.in/Scripts/rss.aspx",
-    "Economic Times - Banking": "https://economictimes.indiatimes.com/industry/banking/finance/rssfeeds/13358259.cms",
-    "Moneycontrol - Economy": "https://www.moneycontrol.com/rss/economy.xml",
-    "Google News - Credit Risk India": "https://news.google.com/rss/search?q=credit+risk+india+RBI&hl=en-IN&gl=IN&ceid=IN:en",
-    "Google News - Loan Default India": "https://news.google.com/rss/search?q=loan+default+NPA+india&hl=en-IN&gl=IN&ceid=IN:en",
-}
-
-
-@st.cache_data(ttl=1800)
-def fetch_news(feed_name: str, max_items: int = 8) -> list[dict]:
-    """Fetch RSS feed and return list of article dicts."""
-    if not FEEDPARSER_AVAILABLE:
-        return []
-    url = NEWS_FEEDS.get(feed_name, "")
-    if not url:
-        return []
-    try:
-        feed = feedparser.parse(url)
-        articles = []
-        for entry in feed.entries[:max_items]:
-            articles.append({
-                "title": entry.get("title", "No title"),
-                "link":  entry.get("link", "#"),
-                "published": entry.get("published", ""),
-                "summary": entry.get("summary", "")[:200] + "..." if entry.get("summary") else "",
-                "source": feed_name,
-            })
-        return articles
-    except Exception:
-        return []
-
-
-@st.cache_data(ttl=1800)
-def get_all_news() -> list[dict]:
-    """Fetch from all feeds and merge, sorted by recency."""
-    all_articles = []
-    for feed_name in NEWS_FEEDS:
-        all_articles.extend(fetch_news(feed_name, max_items=5))
-    return all_articles

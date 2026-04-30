@@ -11,5 +11,5 @@ joblib
 requests
 lime
 reportlab
-feedparser
+fairlearn
 statsmodels

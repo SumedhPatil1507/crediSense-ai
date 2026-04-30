@@ -65,14 +65,19 @@ with tabs[0]:
             sel_id = st.selectbox("Select case ID", item_ids)
             sel_row = df_q[df_q["id"] == sel_id].iloc[0]
 
+            from src.hitl_queue import agentic_review
+            agent_insight = agentic_review(sel_row.to_dict())
+
             rc1, rc2 = st.columns(2)
             with rc1:
                 st.markdown(f"**Risk Probability:** {float(sel_row['risk_prob']):.2%}")
                 st.markdown(f"**Reason:** {sel_row['reason']}")
                 st.markdown(f"**CI:** [{sel_row['ci_lower']}, {sel_row['ci_upper']}]")
+                st.info(f"🤖 **Agent Recommendation:** {agent_insight['recommended_decision']}\n\n**Rationale:** {agent_insight['rationale']}")
             with rc2:
                 analyst_dec = st.selectbox("Analyst Decision",
-                                            ["Approve", "Reject", "Escalate", "Request More Info"])
+                                            ["Approve", "Reject", "Escalate", "Request More Info"],
+                                            index=["Approve", "Reject", "Escalate", "Request More Info"].index(agent_insight['recommended_decision']) if agent_insight['recommended_decision'] in ["Approve", "Reject", "Escalate", "Request More Info"] else 0)
                 analyst_notes = st.text_area("Notes", placeholder="Reasoning for decision...")
 
             if st.button("Submit Decision", type="primary"):
@@ -144,6 +149,24 @@ with tabs[1]:
             alert_result = check_and_alert_drift(psi)
             if alert_result and alert_result.get("any_sent"):
                 st.info("Alert sent to configured channels.")
+
+            # Self-Healing: Automated Retraining Trigger
+            st.markdown("---")
+            st.subheader("🤖 Self-Healing (Automated Retraining)")
+            if status == "critical":
+                st.error("Critical drift detected. The system recommends automated retraining.")
+                if st.button("Trigger Automated Retraining Now", type="primary"):
+                    with st.spinner("Retraining model on latest data..."):
+                        from src.train import train
+                        train()
+                        st.success("Model retrained successfully. New version is active.")
+            else:
+                st.info("Model is within acceptable drift thresholds. Retraining not required.")
+                if st.button("Force Retraining"):
+                    with st.spinner("Forcing model retrain..."):
+                        from src.train import train
+                        train()
+                        st.success("Model retrained successfully.")
 
     st.markdown("---")
     st.subheader("Characteristic Stability Index (CSI) — Feature-Level Drift")

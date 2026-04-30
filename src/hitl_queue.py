@@ -89,3 +89,38 @@ def queue_stats() -> dict:
         "pending": sum(1 for r in all_items if r["status"] == "pending"),
         "resolved": sum(1 for r in all_items if r["status"] == "resolved"),
     }
+
+def agentic_review(item_data: dict) -> dict:
+    """
+    Simulates an AI Agent providing a recommended decision and rationale
+    based on the applicant's data and risk probability.
+    """
+    prob = float(item_data.get("risk_prob", 0.5))
+    income = float(item_data.get("income_lpa", 0))
+    exp = int(item_data.get("experience_years", 0))
+    
+    # Simple rule-based expert system simulating an LLM analysis
+    if prob > 0.65:
+        decision = "Reject"
+        rationale = f"Risk probability is high ({prob:.1%}). "
+    elif prob < 0.35:
+        decision = "Approve"
+        rationale = f"Risk probability is low ({prob:.1%}). "
+    else:
+        decision = "Manual Review"
+        rationale = f"Risk probability is borderline ({prob:.1%}). "
+        
+    if income > 15:
+        rationale += "Applicant has strong income, which may offset some risk. "
+    elif income < 5:
+        rationale += "Income is relatively low, increasing exposure. "
+        
+    if exp > 10:
+        rationale += "Extensive work experience suggests stability."
+    elif exp < 2:
+        rationale += "Limited work experience poses additional risk."
+        
+    return {
+        "recommended_decision": decision,
+        "rationale": rationale
+    }

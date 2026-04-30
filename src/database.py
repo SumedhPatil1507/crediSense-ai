@@ -1,17 +1,15 @@
 """
-Database layer — Supabase (PostgreSQL) with CSV fallback.
-If SUPABASE_URL/KEY are set, uses Supabase. Otherwise falls back to CSV files.
+Database layer — Supabase (PostgreSQL).
+Requires SUPABASE_URL and SUPABASE_KEY to be set in environment or Streamlit secrets.
 
 Supabase setup:
   1. Create project at supabase.com (free tier)
   2. Run the SQL in db/schema.sql in the Supabase SQL editor
   3. Set SUPABASE_URL and SUPABASE_KEY in environment / Streamlit secrets
 """
-import csv
 import json
-from pathlib import Path
 from datetime import datetime
-from src.config import SUPABASE_URL, SUPABASE_KEY, BASE_DIR
+from src.config import SUPABASE_URL, SUPABASE_KEY
 
 # Try Supabase
 try:
@@ -22,36 +20,9 @@ except Exception:
 
 USING_SUPABASE = _sb is not None
 
-# CSV fallback paths
-_CSV_PREDICTIONS = BASE_DIR / "data" / "predictions.csv"
-_CSV_FEEDBACK    = BASE_DIR / "data" / "feedback_log.csv"
-_CSV_AUDIT       = BASE_DIR / "data" / "audit_log.csv"
-
-_PRED_HEADERS    = ["id","timestamp","income_lpa","age_years","experience_years",
-                    "income_norm","age_norm","experience_norm",
-                    "risk_prob","ci_lower","ci_upper","decision","confidence","page"]
-_FB_HEADERS      = ["id","timestamp","prediction_id","feedback","corrected_label","notes"]
-_AUDIT_HEADERS   = ["id","timestamp","event","input_hash","user_id","details"]
-
-
-def _ensure(path: Path, headers: list):
-    if not path.exists():
-        path.parent.mkdir(parents=True, exist_ok=True)
-        with open(path, "w", newline="") as f:
-            csv.DictWriter(f, fieldnames=headers).writeheader()
-
-
-def _csv_append(path: Path, headers: list, row: dict):
-    _ensure(path, headers)
-    with open(path, "a", newline="") as f:
-        csv.DictWriter(f, fieldnames=headers).writerow(row)
-
-
-def _csv_read(path: Path, headers: list) -> list[dict]:
-    _ensure(path, headers)
-    with open(path, "r") as f:
-        return list(csv.DictReader(f))
-
+def _check_supabase():
+    if not USING_SUPABASE:
+        raise RuntimeError("Supabase is not configured. Please set SUPABASE_URL and SUPABASE_KEY.")
 
 # ── Public API ─────────────────────────────────────────────────────────────────
 
@@ -60,6 +31,7 @@ def log_prediction(income_lpa: float, age_years: int, experience_years: int,
                    risk_prob: float, ci_lower: float, ci_upper: float,
                    decision: str, confidence: str, page: str = "API") -> str:
     """Insert a prediction record. Returns the record ID."""
+    _check_supabase()
     import uuid
     rec_id = str(uuid.uuid4())[:8]
     row = {
@@ -78,19 +50,14 @@ def log_prediction(income_lpa: float, age_years: int, experience_years: int,
         "confidence": confidence,
         "page": page,
     }
-    if USING_SUPABASE:
-        try:
-            _sb.table("predictions").insert(row).execute()
-            return rec_id
-        except Exception:
-            pass
-    _csv_append(_CSV_PREDICTIONS, _PRED_HEADERS, row)
+    _sb.table("predictions").insert(row).execute()
     return rec_id
 
 
 def log_feedback(prediction_id: str, feedback: str,
                  corrected_label: str = "", notes: str = "",
                  user_id: str = "anonymous") -> None:
+    _check_supabase()
     import uuid
     row = {
         "id": str(uuid.uuid4())[:8],
@@ -100,17 +67,12 @@ def log_feedback(prediction_id: str, feedback: str,
         "corrected_label": corrected_label,
         "notes": notes,
     }
-    if USING_SUPABASE:
-        try:
-            _sb.table("feedback").insert(row).execute()
-            return
-        except Exception:
-            pass
-    _csv_append(_CSV_FEEDBACK, _FB_HEADERS, row)
+    _sb.table("feedback").insert(row).execute()
 
 
 def log_audit(event: str, input_hash: str, details: str = "",
               user_id: str = "anonymous") -> None:
+    _check_supabase()
     import uuid
     import hashlib
     row = {
@@ -121,47 +83,29 @@ def log_audit(event: str, input_hash: str, details: str = "",
         "user_id": hashlib.sha256(user_id.encode()).hexdigest()[:12],
         "details": details,
     }
-    if USING_SUPABASE:
-        try:
-            _sb.table("audit_log").insert(row).execute()
-            return
-        except Exception:
-            pass
-    _csv_append(_CSV_AUDIT, _AUDIT_HEADERS, row)
+    _sb.table("audit_log").insert(row).execute()
 
 
 def get_predictions(limit: int = 500) -> list[dict]:
-    if USING_SUPABASE:
-        try:
-            res = _sb.table("predictions").select("*").order("timestamp", desc=True).limit(limit).execute()
-            return res.data
-        except Exception:
-            pass
-    return _csv_read(_CSV_PREDICTIONS, _PRED_HEADERS)[-limit:]
+    _check_supabase()
+    res = _sb.table("predictions").select("*").order("timestamp", desc=True).limit(limit).execute()
+    return res.data
 
 
 def get_feedback(limit: int = 500) -> list[dict]:
-    if USING_SUPABASE:
-        try:
-            res = _sb.table("feedback").select("*").order("timestamp", desc=True).limit(limit).execute()
-            return res.data
-        except Exception:
-            pass
-    return _csv_read(_CSV_FEEDBACK, _FB_HEADERS)[-limit:]
+    _check_supabase()
+    res = _sb.table("feedback").select("*").order("timestamp", desc=True).limit(limit).execute()
+    return res.data
 
 
 def get_audit(limit: int = 500) -> list[dict]:
-    if USING_SUPABASE:
-        try:
-            res = _sb.table("audit_log").select("*").order("timestamp", desc=True).limit(limit).execute()
-            return res.data
-        except Exception:
-            pass
-    return _csv_read(_CSV_AUDIT, _AUDIT_HEADERS)[-limit:]
+    _check_supabase()
+    res = _sb.table("audit_log").select("*").order("timestamp", desc=True).limit(limit).execute()
+    return res.data
 
 
 def db_status() -> dict:
     return {
-        "backend": "supabase" if USING_SUPABASE else "csv_fallback",
+        "backend": "supabase" if USING_SUPABASE else "not_configured",
         "supabase_configured": bool(SUPABASE_URL and SUPABASE_KEY),
     }

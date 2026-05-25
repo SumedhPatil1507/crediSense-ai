@@ -135,8 +135,8 @@ try:
             }).sort_values("SHAP Value", key=abs, ascending=False).head(12)
             st.dataframe(
                 shap_df.style.format({"SHAP Value": "{:+.4f}"})
-                .applymap(lambda v: "color: red" if v == "Increases Risk" else "color: green",
-                          subset=["Direction"]),
+                .map(lambda v: "color: red" if v == "Increases Risk" else "color: green",
+                     subset=["Direction"]),
                 use_container_width=True, hide_index=True
             )
 
@@ -241,7 +241,7 @@ try:
                 def highlight_fair(val):
                     return "background-color: #d4edda" if val == "Yes" else "background-color: #f8d7da"
                 st.dataframe(
-                    dir_df.style.applymap(highlight_fair, subset=["fair"]),
+                    dir_df.style.map(highlight_fair, subset=["fair"]),
                     use_container_width=True, hide_index=True
                 )
 

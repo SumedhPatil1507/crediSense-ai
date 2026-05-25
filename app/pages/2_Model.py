@@ -194,6 +194,28 @@ with tabs[0]:
         st.caption("Dataset: [Kaggle](https://www.kaggle.com/datasets/subhamjain/loan-prediction-based-on-customer-behavior) | "
                    "Model: [LightGBM NeurIPS 2017](https://papers.nips.cc/paper/2017/hash/6449f44a102fde848669bdd9eb6b76fa-Abstract.html)")
 
+        # Live macro context
+        st.markdown("---")
+        st.subheader("Live Macro Context")
+        st.caption("Current India macroeconomic indicators that influence credit risk.")
+        try:
+            from src.live_data import get_macro_indicators, get_rbi_repo_rate
+            macro = get_macro_indicators()
+            repo  = get_rbi_repo_rate()
+            current_repo = repo[-1]["rate"] if repo else "N/A"
+
+            mc1, mc2, mc3, mc4 = st.columns(4)
+            for i, (name, df_m) in enumerate(list(macro.items())[:4]):
+                if not df_m.empty:
+                    val = df_m.iloc[-1]["value"]
+                    prev = df_m.iloc[-2]["value"] if len(df_m) > 1 else val
+                    delta = round(val - prev, 2)
+                    [mc1, mc2, mc3, mc4][i].metric(
+                        name.split("(")[0].strip(), f"{val:.2f}%", delta=f"{delta:+.2f}%")
+            st.caption(f"RBI Repo Rate: {current_repo}% | Source: World Bank Open Data")
+        except Exception:
+            pass
+
     # Feedback
     if "last_pred" in st.session_state:
         st.markdown("---")

@@ -44,7 +44,7 @@ try:
     sample = load_sample()
     explainer, sv, X_dense, feature_names = get_explainer_and_values(model, sample)
 
-    tabs = st.tabs(["📊 SHAP Summary", "🔍 SHAP Waterfall", "📈 SHAP Dependence", "🍋 LIME"])
+    tabs = st.tabs(["📊 SHAP Summary", "🔍 SHAP Waterfall", "📈 SHAP Dependence", "🍋 LIME", "⚖️ Fairness"])
 
     # ── TAB 1: SHAP Summary ────────────────────────────────────────────────────
     with tabs[0]:
@@ -133,8 +133,10 @@ try:
             with st.spinner("Running LIME..."):
                 with warnings.catch_warnings():
                     warnings.simplefilter("ignore")
+                    # Wrap predict_fn to give LightGBM proper feature names
                     def predict_fn(x):
-                        return model.named_steps['model'].predict_proba(x)
+                        df_x = pd.DataFrame(x, columns=feature_names)
+                        return mod.predict_proba(df_x)
                     lime_result = lime_exp_obj.explain_instance(
                         X_dense[lime_idx], predict_fn, num_features=10, top_labels=1
                     )
@@ -142,21 +144,76 @@ try:
             lime_list = lime_result.as_list(label=1)
             df_lime = pd.DataFrame(lime_list, columns=["Feature Condition", "Weight"])
             df_lime["Direction"] = df_lime["Weight"].apply(
-                lambda x: "↑ Increases Risk" if x > 0 else "↓ Decreases Risk")
+                lambda x: "Increases Risk" if x > 0 else "Decreases Risk")
 
             fig_lime = px.bar(df_lime, x="Weight", y="Feature Condition",
                               orientation="h", color="Direction",
-                              color_discrete_map={"↑ Increases Risk": "red",
-                                                  "↓ Decreases Risk": "green"},
+                              color_discrete_map={"Increases Risk": "red",
+                                                  "Decreases Risk": "green"},
                               title="LIME Feature Weights for Selected Applicant")
             st.plotly_chart(fig_lime, use_container_width=True)
             st.dataframe(df_lime, use_container_width=True)
-            st.caption("📚 [LIME paper — Ribeiro et al., KDD 2016](https://arxiv.org/abs/1602.04938)")
+            st.caption("LIME paper: Ribeiro et al., KDD 2016 — https://arxiv.org/abs/1602.04938")
 
         except ImportError:
-            st.info("Install `lime` to enable LIME explanations: `pip install lime`")
+            st.info("Install `lime` to enable LIME explanations.")
         except Exception as e:
             st.error(f"LIME error: {e}")
+
+    # ── TAB 5: Fairness ────────────────────────────────────────────────────────
+    with tabs[4]:
+        st.subheader("Fairness & Bias Analysis")
+        st.caption("Model performance across demographic subgroups. Disparate Impact Ratio < 0.8 = potential bias.")
+
+        try:
+            from src.fairness import subgroup_metrics, disparate_impact_ratio
+            from src.data_loader import load_data
+            from src.preprocessing import clean_data
+            from src.feature_engineering import create_features
+            from sklearn.model_selection import train_test_split
+
+            @st.cache_data
+            def load_fairness_data():
+                df = load_data(str(BASE_DIR / "data" / "loan_cleaned.csv"))
+                df = clean_data(df)
+                df = create_features(df)
+                _, df_test = train_test_split(df, test_size=0.1, stratify=df["Risk_Flag"], random_state=42)
+                return df_test.reset_index(drop=True)
+
+            with st.spinner("Computing fairness metrics..."):
+                df_fair = load_fairness_data()
+                metrics_df = subgroup_metrics(model, df_fair)
+
+            if not metrics_df.empty:
+                st.subheader("Subgroup Performance")
+                st.dataframe(
+                    metrics_df.style.format({"AUC": "{:.4f}", "F1": "{:.4f}",
+                                              "approval_rate": "{:.2%}", "default_rate": "{:.2%}"}),
+                    use_container_width=True
+                )
+
+                fig_fair = px.bar(metrics_df, x="group_val", y="approval_rate",
+                                   color="group_col", barmode="group",
+                                   title="Approval Rate by Subgroup",
+                                   labels={"approval_rate": "Approval Rate", "group_val": "Group"})
+                fig_fair.add_hline(y=0.8, line_dash="dash", line_color="red",
+                                    annotation_text="80% threshold")
+                st.plotly_chart(fig_fair, use_container_width=True)
+
+                st.subheader("Disparate Impact Ratio (4/5ths Rule)")
+                dir_df = disparate_impact_ratio(metrics_df)
+                if not dir_df.empty:
+                    st.dataframe(
+                        dir_df.style.applymap(
+                            lambda v: "background-color: #f8d7da" if v == "No" else "background-color: #d4edda",
+                            subset=["fair"]
+                        ),
+                        use_container_width=True
+                    )
+                st.caption("Disparate Impact Ratio < 0.8 may indicate discriminatory outcomes. "
+                           "Ref: ECOA, Fair Housing Act.")
+        except Exception as e:
+            st.error(f"Fairness analysis error: {e}")
 
 except Exception as e:
     st.error(f"Error loading explainability: {e}")

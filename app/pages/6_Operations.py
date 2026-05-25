@@ -309,40 +309,55 @@ with tabs[4]:
 
     a1, a2 = st.columns(2)
     with a1:
-        st.markdown("**Webhook Status**")
+        st.markdown("**Webhook (Slack/Teams/Discord)**")
         if WEBHOOK_URL:
             st.success("Webhook configured")
         else:
-            st.warning("No webhook configured. Set `ALERT_WEBHOOK_URL` in environment.")
-            st.caption("Supports Slack, Teams, Discord, or any HTTP POST endpoint.")
+            st.info("Not configured — set `ALERT_WEBHOOK_URL` in Streamlit secrets.")
+            with st.expander("How to set up Slack webhook"):
+                st.markdown("""
+                1. Go to https://api.slack.com/apps → Create New App
+                2. Enable **Incoming Webhooks** → Add to Workspace
+                3. Copy the webhook URL (starts with `https://hooks.slack.com/...`)
+                4. In Streamlit Cloud → Manage App → Settings → Secrets:
+                ```
+                ALERT_WEBHOOK_URL = "https://hooks.slack.com/services/..."
+                ```
+                """)
 
     with a2:
-        st.markdown("**Email Status**")
+        st.markdown("**Email Alerts**")
         if ALERT_EMAIL:
-            st.success(f"Email alerts → {ALERT_EMAIL}")
+            st.success(f"Email alerts configured")
         else:
-            st.warning("No email configured. Set `ALERT_EMAIL`, `SMTP_USER`, `SMTP_PASS`.")
+            st.info("Not configured — set `ALERT_EMAIL`, `SMTP_USER`, `SMTP_PASS` in secrets.")
+            with st.expander("How to set up email alerts"):
+                st.markdown("""
+                In Streamlit Cloud → Manage App → Settings → Secrets:
+                ```
+                ALERT_EMAIL = "recipient@example.com"
+                SMTP_USER = "sender@gmail.com"
+                SMTP_PASS = "your-app-password"
+                ```
+                Use a Gmail App Password (not your main password).
+                """)
 
     st.markdown("---")
-    st.subheader("Send Test Alert")
-    test_msg = st.text_input("Message", value="Test alert from CrediSense AI")
-    test_level = st.selectbox("Level", ["info", "warning", "critical"])
-    if st.button("Send Test Alert"):
+    st.subheader("Test Alert")
+    test_msg = st.text_input("Message", value="Test alert from CrediSense AI", key="alert_msg")
+    test_level = st.selectbox("Level", ["info", "warning", "critical"], key="alert_level")
+    if st.button("Send Test Alert", key="send_alert"):
         result = alert("Test Alert", test_msg, test_level)
         if result["any_sent"]:
             st.success(f"Alert sent — webhook: {result['webhook']}, email: {result['email']}")
         else:
-            st.warning("No channels configured. Alert not sent.")
-            st.caption("Configure ALERT_WEBHOOK_URL or SMTP settings in your environment.")
+            st.warning("No channels configured. Configure webhook or email in Streamlit secrets to enable alerts.")
 
     st.markdown("---")
     st.subheader("Alert Rules")
-    st.markdown("""
-    | Trigger | Threshold | Level |
-    |---------|-----------|-------|
-    | PSI drift | > 0.2 | Critical |
-    | PSI drift | 0.1 - 0.2 | Warning |
-    | HITL queue backlog | > 20 pending | Warning |
-    | Model hash mismatch | Any | Info |
-    """)
-    st.caption("Alerts fire automatically when predictions are made and thresholds are exceeded.")
+    st.dataframe(pd.DataFrame([
+        {"Trigger": "PSI drift", "Threshold": "> 0.2", "Level": "Critical", "Auto": "Yes"},
+        {"Trigger": "PSI drift", "Threshold": "0.1 - 0.2", "Level": "Warning", "Auto": "Yes"},
+        {"Trigger": "HITL queue backlog", "Threshold": "> 20 pending", "Level": "Warning", "Auto": "Yes"},
+        {"Trigger": "Model hash mismatch", "Threshold": "Any", "Level": "Info", "Auto": "No"},
+    ]), use_container_width=True, hide_index=True)

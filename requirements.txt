@@ -9,7 +9,6 @@ seaborn
 shap
 joblib
 requests
-lime
 reportlab
-fairlearn
 statsmodels
+fairlearn

@@ -31,8 +31,13 @@ jobs:
           python -c "from src.drift_monitor import compute_psi, interpret_psi; print('OK: drift_monitor')"
           python -c "from src.hitl_queue import get_queue, queue_stats; print('OK: hitl_queue')"
           python -c "from src.shadow_mode import get_shadow_log; print('OK: shadow_mode')"
-          python -c "from src.model_registry import get_all_versions; print('OK: model_registry')"
+          python -c "from src.model_registry import get_all_versions, registry_storage_info; print('OK: model_registry')"
           python -c "from src.alerts import alert; print('OK: alerts')"
+          python -c "from src.encryption import encryption_status, mask_pii_strict; print('OK: encryption:', encryption_status())"
+          python -c "from src.compliance import get_compliance_summary, BUREAU_MOCK; print('OK: compliance, bureau_mock:', BUREAU_MOCK)"
+          python -c "from src.metrics_server import metrics_status; print('OK: metrics_server:', metrics_status())"
+          python -c "from src.fairness import subgroup_metrics, disparate_impact_ratio; print('OK: fairness')"
+          python -c "from src.schemas import ApplicantInput; print('OK: schemas')"
           python -c "from utils import build_full_input; print('OK: utils')"
 
       - name: Run unit tests

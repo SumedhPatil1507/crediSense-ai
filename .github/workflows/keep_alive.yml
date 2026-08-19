@@ -1,0 +1,40 @@
+name: Keep Alive — Streamlit Cloud
+
+on:
+  schedule:
+    - cron: "*/10 * * * *"   # every 10 minutes
+  workflow_dispatch:           # allow manual trigger
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+
+    steps:
+      - name: Ping Streamlit deployment
+        run: |
+          APP_URL="https://credisense-ai-uzzvdsxuuxdbocfwxhmqcc.streamlit.app/"
+
+          echo "Pinging: $APP_URL"
+          echo "Timestamp: $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
+
+          HTTP_STATUS=$(curl \
+            --silent \
+            --output /dev/null \
+            --write-out "%{http_code}" \
+            --max-time 30 \
+            --retry 2 \
+            --retry-delay 5 \
+            "$APP_URL") || HTTP_STATUS="000"
+
+          echo "HTTP status: $HTTP_STATUS"
+
+          if [ "$HTTP_STATUS" -ge 200 ] && [ "$HTTP_STATUS" -lt 400 ]; then
+            echo "App is alive and responding normally."
+          elif [ "$HTTP_STATUS" = "000" ]; then
+            echo "Warning: Could not reach app (network error or timeout). Will retry next cycle."
+            exit 0
+          else
+            echo "Warning: App returned HTTP $HTTP_STATUS. May be waking up."
+            exit 0
+          fi

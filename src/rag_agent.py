@@ -414,10 +414,60 @@ and Digital Personal Data Protection Act 2023.
 def _template_compliance_answer(query: str, clauses: list[dict[str, Any]]) -> str:
     """Generate a cited compliance answer from retrieved clauses."""
     if not clauses:
+        # Detect whether the query is out-of-scope vs. just an empty store
+        _OUT_OF_SCOPE_HINTS = {
+            "withdraw": "transaction monitoring / AML",
+            "withdrawal": "transaction monitoring / AML",
+            "deposit": "banking transactions / AML",
+            "transfer": "fund transfers / payment systems",
+            "cash": "cash transaction reporting (CTR/AML)",
+            "aml": "Anti-Money Laundering (PMLA / FATF)",
+            "money laundering": "Anti-Money Laundering",
+            "sanctions": "sanctions screening",
+            "kyc": "KYC / Customer Due Diligence",
+            "suspicious": "suspicious transaction reporting (STR)",
+            "fraud": "transaction fraud detection",
+            "upi": "UPI / payment rails",
+            "neft": "NEFT / RTGS payment systems",
+            "tax": "taxation / TDS",
+            "interest rate": "RBI monetary policy",
+            "stock": "securities / SEBI",
+            "investment": "wealth management / SEBI",
+            "insurance": "insurance regulation / IRDAI",
+        }
+        q_lower = query.lower()
+        matched_domain = next(
+            (domain for hint, domain in _OUT_OF_SCOPE_HINTS.items() if hint in q_lower),
+            None,
+        )
+
+        if matched_domain:
+            return (
+                f"This question is outside the scope of the CrediSense Regulatory Copilot.\n\n"
+                f"**Why:** The query appears to be about **{matched_domain}**, which is not "
+                f"covered by the knowledge base in this system.\n\n"
+                f"**What this copilot covers:**\n"
+                f"- ECOA Regulation B — adverse action notices, credit decision fairness\n"
+                f"- FCRA — consumer report rights, dispute process\n"
+                f"- RBI IT Framework (2023) — model governance, encryption, audit trails, BCP\n"
+                f"- DPDP Act 2023 — personal data consent, retention, erasure, breach notification\n\n"
+                f"**Try asking:**\n"
+                f"- \"Is this credit rejection compliant with ECOA?\"\n"
+                f"- \"What does the DPDP Act require for data retention after a loan decision?\"\n"
+                f"- \"Draft an adverse action notice for this rejected application.\"\n"
+                f"- \"What are the RBI IT Framework audit trail requirements?\""
+            )
+
+        # Store likely empty — generic init message
         return (
-            "No directly relevant regulatory clauses were retrieved for this query. "
-            "Please ensure the regulatory documents have been ingested "
-            "(run `python -m src.ingest_regulations`) or rephrase your question."
+            "No directly relevant regulatory clauses were retrieved for this query.\n\n"
+            "This can happen if:\n"
+            "1. The regulatory store hasn't been initialised yet — run "
+            "`python -m src.ingest_regulations` to load the seed knowledge base.\n"
+            "2. The question is phrased in a way that doesn't match the regulatory text — "
+            "try rephrasing around specific obligations, rights, or compliance requirements.\n\n"
+            "**In-scope topics:** ECOA adverse action notices · FCRA consumer rights · "
+            "RBI IT Framework model governance · DPDP Act 2023 data protection."
         )
 
     lines = [

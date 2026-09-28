@@ -27,11 +27,12 @@ sentence-transformers==3.3.1
 pypdf==4.3.1
 
 # LangChain core (LLM abstraction + prompt templates)
-langchain-core==0.3.28
+# No hard pin — version is resolved by langchain-openai/langchain-groq/langgraph constraints
+langchain-core>=0.3.29,<0.4.0
 
 # LangGraph (agent graph orchestration)
-langgraph==0.2.60
+langgraph>=0.2.60,<0.3.0
 
 # LLM providers (both optional — app works offline without API keys)
-langchain-openai==0.2.14
-langchain-groq==0.2.3
+langchain-openai>=0.2.14,<0.3.0
+langchain-groq>=0.2.3,<0.3.0

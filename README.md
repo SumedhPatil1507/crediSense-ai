@@ -77,8 +77,14 @@ into earlier training rows. The configured online store uses Redis at
 
 The Streamlit **Feature Streaming** page (`8_Feature_Streaming.py`) provides
 interactive Plotly timelines and latest-value comparisons by applicant. It reads
-the local Feast parquet history and offers synthetic demo data until that file is
-present. Create it with `python scripts/generate_demo_feature_events.py`.
+the local Feast parquet history, accepts CSV/Parquet uploads, or loads live Kafka
+feature history from the authenticated `GET /api/v1/features/events` endpoint.
+The API reads sanitized fields from `loan_application_audit` in PostgreSQL.
+Configure Streamlit secrets `CREDISENSE_LIVE_FEATURES_URL` (for example,
+`https://your-api-host/api/v1/features/events`) and
+`CREDISENSE_LIVE_FEATURES_TOKEN` (the API key). Synthetic preview data must be
+selected explicitly. Create a synthetic local Feast parquet file with
+`python scripts/generate_demo_feature_events.py`.
 
 Run `dotenv -f .env run -- feast apply` before first use, then
 `dotenv -f .env run -- python -m src.streaming.kafka_consumer` to consume
@@ -404,8 +410,9 @@ upload template. CSVs require `Income`, `Age`, and `Experience` in the model's
 normalized 0–1 input scale. Optional columns such as `House_Ownership`,
 `Married/Single`, and tenure improve the explanation. The page can screen
 subgroup metrics only when an observed `Risk_Flag` label is present. The
-Feature Streaming page offers synthetic demo data when no feature history is
-available.
+Feature Streaming page supports Feast parquet history, CSV/Parquet uploads, and
+live Kafka feature history through the authenticated API; synthetic preview data
+is opt-in.
 
 To deploy or update it, connect the public repository
 `SumedhPatil1507/crediSense-ai` in Streamlit Community Cloud and select branch

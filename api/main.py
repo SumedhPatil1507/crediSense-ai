@@ -3,6 +3,7 @@ CrediSense AI — FastAPI Backend
 Endpoints: /predict, /predict/batch, /explain, /feedback, /health, /metrics
 """
 import json
+import os
 import warnings
 import hashlib
 import hmac
@@ -11,7 +12,7 @@ from pathlib import Path
 from typing import Optional
 import joblib
 
-from fastapi import FastAPI, HTTPException, Depends, Header
+from fastapi import FastAPI, HTTPException, Depends, Header, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field, field_validator
 
@@ -163,6 +164,36 @@ def get_gnn_attribution(applicant_id: str | None) -> dict | None:
 @app.get("/health")
 def health():
     return {"status": "ok", "version": API_VERSION, "db": db_status()}
+
+
+@app.get(f"/api/{API_VERSION}/features/events")
+async def feature_events(limit: int = Query(500, ge=1, le=5000),
+                         _: str = Depends(verify_api_key)):
+    """Expose sanitized Kafka feature history for the authenticated dashboard."""
+    dsn = os.getenv("DATABASE_URL")
+    if not dsn:
+        raise HTTPException(status_code=503, detail="Feature event database is not configured")
+    try:
+        import asyncpg
+        connection = await asyncpg.connect(dsn, timeout=5)
+        try:
+            rows = await connection.fetch(
+                """SELECT application_id, applicant_id, event_timestamp,
+                          (payload->>'rolling_credit_utilization')::double precision AS rolling_credit_utilization,
+                          (payload->>'payment_velocity')::double precision AS payment_velocity,
+                          (payload->>'debt_to_income_ratio')::double precision AS debt_to_income_ratio
+                   FROM loan_application_audit
+                   ORDER BY event_timestamp DESC LIMIT $1""",
+                limit,
+            )
+        finally:
+            await connection.close()
+    except ImportError as exc:
+        raise HTTPException(status_code=503, detail="asyncpg is required for live feature history") from exc
+    except Exception as exc:
+        LOGGER.exception("Unable to read Kafka feature history")
+        raise HTTPException(status_code=503, detail="Feature event history is unavailable") from exc
+    return {"events": [dict(row) for row in rows]}
 
 
 @app.post(f"/api/{API_VERSION}/predict")

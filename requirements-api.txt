@@ -4,6 +4,7 @@ python-dotenv[cli]
 pytest
 httpx
 prometheus-client
+asyncpg>=0.29,<1.0
 boto3
 guardrails-ai>=0.6,<0.7
 opentelemetry-api>=1.28,<2.0

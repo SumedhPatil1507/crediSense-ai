@@ -5,6 +5,8 @@ Endpoints: /predict, /predict/batch, /explain, /feedback, /health, /metrics
 import json
 import warnings
 import hashlib
+import hmac
+import logging
 from pathlib import Path
 from typing import Optional
 import joblib
@@ -18,13 +20,15 @@ BASE_DIR = Path(__file__).resolve().parents[1]
 sys.path.append(str(BASE_DIR))
 
 from src.config import (MODEL_PATH, COLUMNS_PATH, API_SECRET_KEY, API_VERSION,
-                         THRESHOLD_APPROVE, THRESHOLD_REVIEW)
+                         THRESHOLD_APPROVE, THRESHOLD_REVIEW, API_ALLOWED_ORIGINS)
 from src.confidence_intervals import bootstrap_ci, interpret_ci
 from src.adverse_action import generate_adverse_action
 from src.validation import hash_input
 from src.database import log_prediction, log_feedback, log_audit, db_status
 from src.hitl_queue import enqueue as hitl_enqueue
 from src.model_registry import get_active_version, get_current_model_hash
+from src.metrics_server import setup_metrics
+from src.telemetry import traced_predict_proba
 
 # ── Load model ─────────────────────────────────────────────────────────────────
 model = joblib.load(MODEL_PATH)
@@ -42,19 +46,25 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=API_ALLOWED_ORIGINS,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+LOGGER = logging.getLogger(__name__)
+setup_metrics(app)
 
 # ── Auth ───────────────────────────────────────────────────────────────────────
 def verify_api_key(x_api_key: str = Header(...)):
-    if x_api_key != API_SECRET_KEY:
+    if not hmac.compare_digest(x_api_key, API_SECRET_KEY):
         raise HTTPException(status_code=401, detail="Invalid API key")
     return x_api_key
 
 # ── Schemas ────────────────────────────────────────────────────────────────────
 class ApplicantInput(BaseModel):
+    applicant_id: Optional[str] = Field(
+        None, min_length=1, max_length=128,
+        description="Stable internal graph key used to retrieve precomputed R-GCN risk attribution",
+    )
     income_lpa: float = Field(..., gt=0, le=500, description="Annual income in LPA (lakhs per annum)")
     age_years: int    = Field(..., ge=18, le=70, description="Age in years")
     experience_years: int = Field(..., ge=0, le=45, description="Work experience in years")
@@ -129,6 +139,25 @@ def make_confidence(prob: float) -> str:
     return "Low"
 
 
+def score_credit_risk(input_frame, *, operation: str = "predict") -> float:
+    """Run and trace the model score without attaching applicant feature values."""
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        return float(traced_predict_proba(model, input_frame, operation=operation)[0][1])
+
+
+def get_gnn_attribution(applicant_id: str | None) -> dict | None:
+    """Return precomputed graph scores when the optional GNN/Neo4j stack is enabled."""
+    if not applicant_id:
+        return None
+    try:
+        from src.gnn_risk import get_applicant_graph_risk
+        return get_applicant_graph_risk(applicant_id)
+    except ImportError:
+        LOGGER.info("PyTorch Geometric / Neo4j GNN stack is not installed")
+        return None
+
+
 # ── Routes ─────────────────────────────────────────────────────────────────────
 
 @app.get("/health")
@@ -140,14 +169,18 @@ def health():
 def predict(inp: ApplicantInput, _: str = Depends(verify_api_key)):
     try:
         df_in, inc_n, age_n, exp_n = build_input_df(inp)
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore")
-            prob = float(model.predict_proba(df_in)[0][1])
+        prob = score_credit_risk(df_in)
 
         _, ci_lower, ci_upper = bootstrap_ci(model, df_in, n_bootstrap=100)
         decision   = make_decision(prob)
         confidence = make_confidence(prob)
-        adverse    = generate_adverse_action(prob, inc_n, age_n, exp_n)
+        gnn_scores = get_gnn_attribution(inp.applicant_id)
+        application_context = inp.model_dump()
+        if gnn_scores:
+            application_context["gnn_scores"] = gnn_scores
+        adverse    = generate_adverse_action(
+            prob, inc_n, age_n, exp_n, application=application_context
+        )
 
         input_hash = hash_input(inc_n, age_n, exp_n)
         pred_id = log_prediction(
@@ -181,9 +214,16 @@ def predict(inp: ApplicantInput, _: str = Depends(verify_api_key)):
             "model_version": model_ver,
             "model_hash": model_hash,
             "queued_for_review": hitl_queued,
+            "graph_risk_attribution": gnn_scores,
+            "risk_attribution_sources": [
+                *([{"source": "Heterogeneous R-GCN", "role": "primary_network_signal",
+                    **gnn_scores}] if gnn_scores else []),
+                {"source": "LightGBM", "role": "decision_probability", "score": round(prob, 4)},
+            ],
         }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    except Exception:
+        LOGGER.exception("Prediction request failed")
+        raise HTTPException(status_code=500, detail="Prediction could not be completed")
 
 
 @app.post(f"/api/{API_VERSION}/predict/batch")
@@ -192,10 +232,9 @@ def predict_batch(batch: BatchInput, _: str = Depends(verify_api_key)):
     for inp in batch.applicants:
         try:
             df_in, inc_n, age_n, exp_n = build_input_df(inp)
-            with warnings.catch_warnings():
-                warnings.simplefilter("ignore")
-                prob = float(model.predict_proba(df_in)[0][1])
+            prob = score_credit_risk(df_in, operation="batch_predict")
             decision = make_decision(prob)
+            gnn_scores = get_gnn_attribution(inp.applicant_id)
             pred_id = log_prediction(
                 inp.income_lpa, inp.age_years, inp.experience_years,
                 inc_n, age_n, exp_n, prob, 0.0, 0.0,
@@ -205,11 +244,13 @@ def predict_batch(batch: BatchInput, _: str = Depends(verify_api_key)):
                 "prediction_id": pred_id,
                 "risk_probability": round(prob, 4),
                 "decision": decision,
+                "graph_risk_attribution": gnn_scores,
                 "error": None,
             })
-        except Exception as e:
+        except Exception:
+            LOGGER.exception("Batch prediction failed for one applicant")
             results.append({"prediction_id": None, "risk_probability": None,
-                             "decision": "Error", "error": str(e)})
+                             "decision": "Error", "error": "Prediction failed"})
     return {"count": len(results), "results": results}
 
 
@@ -232,9 +273,20 @@ def explain(inp: ApplicantInput, _: str = Depends(verify_api_key)):
              for i in range(len(feature_names))],
             key=lambda x: abs(x["shap_value"]), reverse=True
         )[:10]
-        return {"top_features": top, "base_value": round(float(explainer.expected_value[1] if isinstance(explainer.expected_value, list) else explainer.expected_value), 4)}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        gnn_scores = get_gnn_attribution(inp.applicant_id)
+        return {
+            "top_features": top,
+            "base_value": round(float(explainer.expected_value[1] if isinstance(explainer.expected_value, list) else explainer.expected_value), 4),
+            "graph_risk_attribution": gnn_scores,
+            "attribution_sources": {
+                "primary_network_signal": ({"source": "Heterogeneous R-GCN", **gnn_scores}
+                                           if gnn_scores else None),
+                "lightgbm_shap_drivers": top,
+            },
+        }
+    except Exception:
+        LOGGER.exception("Explanation request failed")
+        raise HTTPException(status_code=500, detail="Explanation could not be generated")
 
 
 @app.post(f"/api/{API_VERSION}/feedback")

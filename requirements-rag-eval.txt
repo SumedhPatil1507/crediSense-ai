@@ -1,0 +1,4 @@
+# Optional RAGAS evaluation stack; install on evaluation workers only.
+-r requirements.txt
+ragas>=0.3.8,<0.4
+datasets>=3.2,<4

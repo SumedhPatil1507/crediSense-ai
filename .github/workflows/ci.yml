@@ -10,15 +10,15 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
 
       - name: Set up Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
       - name: Install dependencies
-        run: pip install -r requirements.txt -r requirements-api.txt pytest httpx
+        run: pip install -r requirements.txt -r requirements-api.txt pytest httpx pyarrow
 
       - name: Check all imports
         run: |
@@ -40,11 +40,8 @@ jobs:
           python -c "from src.schemas import ApplicantInput; print('OK: schemas')"
           python -c "from utils import build_full_input; print('OK: utils')"
 
-      - name: Run unit tests
-        run: pytest tests/test_pipeline.py -v --tb=short -x
-
-      - name: Run API tests
-        run: pytest tests/test_api.py -v --tb=short -x
+      - name: Run test suite
+        run: pytest tests -v --tb=short -x
 
       - name: API health check
         run: |

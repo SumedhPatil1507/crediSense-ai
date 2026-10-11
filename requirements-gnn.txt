@@ -1,0 +1,5 @@
+# Optional graph-model training and Neo4j export dependencies.
+# Install a platform-appropriate PyTorch build before this file when needed.
+torch>=2.2,<3
+torch-geometric>=2.6,<3
+neo4j>=5.27,<7

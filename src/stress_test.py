@@ -7,6 +7,7 @@ import pandas as pd
 import numpy as np
 from pathlib import Path
 from src.feature_engineering import create_features
+from src.telemetry import traced_predict_proba
 
 BASE_DIR = Path(__file__).resolve().parents[1]
 MODEL_PATH = BASE_DIR / "models" / "model.pkl"
@@ -28,7 +29,7 @@ def run_macro_stress_test(df_original: pd.DataFrame,
     df_baseline = df_original.copy()
     df_baseline = create_features(df_baseline)
     X_baseline = df_baseline.drop(columns=["Risk_Flag", "Id"], errors="ignore")
-    baseline_probs = model.predict_proba(X_baseline)[:, 1]
+    baseline_probs = traced_predict_proba(model, X_baseline, operation="stress_baseline")[:, 1]
     
     # Apply Shocks
     df_shock = df_original.copy()
@@ -41,7 +42,7 @@ def run_macro_stress_test(df_original: pd.DataFrame,
     
     # Predict with shocked features
     X_shock = df_shock.drop(columns=["Risk_Flag", "Id"], errors="ignore")
-    shock_probs = model.predict_proba(X_shock)[:, 1]
+    shock_probs = traced_predict_proba(model, X_shock, operation="stress_scenario")[:, 1]
     
     # Results DataFrame
     results = pd.DataFrame({

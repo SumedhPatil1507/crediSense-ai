@@ -17,6 +17,9 @@ TARGET       = "Risk_Flag"
 # API security
 API_SECRET_KEY = os.getenv("API_SECRET_KEY", "dev-secret-change-in-prod")
 API_VERSION    = "v1"
+API_ALLOWED_ORIGINS = [origin.strip() for origin in os.getenv(
+    "API_ALLOWED_ORIGINS", "http://localhost:8501,http://127.0.0.1:8501"
+).split(",") if origin.strip()]
 
 # Decision thresholds
 THRESHOLD_APPROVE = 0.30

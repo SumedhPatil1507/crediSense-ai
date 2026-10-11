@@ -1,6 +1,7 @@
 """Bootstrap confidence intervals for model predictions."""
 import numpy as np
 import warnings
+from src.telemetry import traced_predict_proba
 
 
 def bootstrap_ci(model, df_input, n_bootstrap: int = 200, ci: float = 0.95):
@@ -24,7 +25,7 @@ def bootstrap_ci(model, df_input, n_bootstrap: int = 200, ci: float = 0.95):
         noisy_df[num_cols] = noisy_vals
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
-            p = model.predict_proba(noisy_df)[0][1]
+            p = traced_predict_proba(model, noisy_df, operation="bootstrap_confidence_interval")[0][1]
         preds.append(p)
 
     preds = np.array(preds)

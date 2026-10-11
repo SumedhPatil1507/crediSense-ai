@@ -9,6 +9,7 @@ Outputs:
 """
 import sys
 import warnings
+from src.telemetry import traced_predict_proba
 from pathlib import Path
 
 import joblib
@@ -113,7 +114,7 @@ def generate_model_evaluation(model, X_test, y_test):
     print("Computing evaluation curves…")
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        y_prob = model.predict_proba(X_test)[:, 1]
+        y_prob = traced_predict_proba(model, X_test, operation="artifact_generation")[:, 1]
 
     fpr, tpr, _     = roc_curve(y_test, y_prob)
     auc             = roc_auc_score(y_test, y_prob)

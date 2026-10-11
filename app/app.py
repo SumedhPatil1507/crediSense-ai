@@ -4,6 +4,7 @@ BASE_DIR = Path(__file__).resolve().parents[1]
 sys.path.append(str(BASE_DIR))
 
 import streamlit as st
+st.set_page_config(page_title="CrediSense AI", layout="wide", page_icon="💳")
 
 # ── Cached resource loaders — loaded once, shared across all pages ─────────────
 
@@ -42,10 +43,18 @@ _load_columns()
 
 # ── Page config ────────────────────────────────────────────────────────────────
 
-st.set_page_config(page_title="CrediSense AI", layout="wide", page_icon="💳")
-st.title("CrediSense AI")
-st.markdown("### Production-Grade Credit Risk Scoring System")
-st.markdown("---")
+st.markdown("""
+<style>
+.hero { padding: 1.4rem 1.7rem; border-radius: 18px; color: #f7f9ff;
+        background: linear-gradient(118deg, #101a32 0%, #173e61 55%, #167d83 100%); }
+.hero h1 { margin: 0; font-size: 2.2rem; }
+.hero p { color: #d4e7f3; margin: .35rem 0 0; font-size: 1.02rem; }
+.subtle { color: #8ca4ba; font-size: .88rem; }
+</style>
+<div class="hero"><h1>CrediSense AI</h1>
+<p>Credit risk exploration · explainability · regulatory document review</p></div>
+""", unsafe_allow_html=True)
+st.caption("Interactive research prototype. Outputs are not validated for real underwriting decisions.")
 
 # ── System status bar ──────────────────────────────────────────────────────────
 
@@ -71,32 +80,28 @@ st.markdown("---")
 
 c1, c2, c3 = st.columns(3)
 with c1:
-    st.info("**EDA** — Dataset analysis, live macro indicators, RSS news feed")
-    st.success("**Model** — Predict with CI, what-if simulator, model comparison, threshold analysis")
+    st.info("**Model lab** — Explore predictions, uncertainty ranges, scenarios, and thresholds")
+    st.success("**Feature streaming** — Inspect timestamped features with interactive Plotly charts")
 with c2:
-    st.warning("**Explainability** — SHAP beeswarm, waterfall, interaction heatmap, fairness audit")
-    st.error("**Chatbot** — Risk assistant with real inputs (LPA/age/years), Q&A knowledge base")
+    st.warning("**Explainability** — Inspect SHAP drivers and subgroup screening summaries")
+    st.error("**Regulatory copilot** — Review retrieved source passages with chunk citations")
 with c3:
-    st.info("**Logs** — Usage logs, feedback, audit trail, cost-benefit, drift monitor")
-    st.success("**Operations** — HITL queue, PSI/CSI drift, shadow mode, model registry, alerts")
+    st.info("**Monitoring** — Review local prediction logs, feedback, and drift indicators")
+    st.success("**Operations** — Explore review queue, model registry, and shadow comparisons")
 
 st.markdown("---")
 col_l, col_r = st.columns(2)
 with col_l:
     st.markdown("""
-    **System Capabilities:**
-    - LightGBM credit risk model (ROC-AUC ~0.97, Gini ~0.94, KS ~0.75)
-    - Bootstrap 95% confidence intervals on every prediction
-    - AES-256 field-level encryption + strict PII masking
-    - ECOA/FCRA adverse action notices for rejections
-    - SHAP explainability + fairness audit (Disparate Impact Ratio)
-    - Human-in-the-loop queue for borderline cases
-    - PSI/CSI drift monitoring with auto-alerts
-    - RBI IT Framework + DPDP Act 2023 compliance module
+    **Explore the app**
+    - Interactive Plotly views across model analysis, explanation, operations, and feature history
+    - Point-in-time feature-store and Kafka streaming examples
+    - Retrieval-backed regulatory Q&A with fail-closed unsupported-claim handling
+    - API inference and optional graph-risk attribution
     """)
 with col_r:
     st.markdown("""
-    **API Endpoints (FastAPI):**
+    **Local API**
     - `POST /api/v1/predict` — Single prediction with CI + adverse action
     - `POST /api/v1/predict/batch` — Batch (up to 500)
     - `POST /api/v1/explain` — SHAP top features
@@ -106,6 +111,36 @@ with col_r:
     - `GET /metrics` — Prometheus metrics (if enabled)
     - Swagger UI: `/docs` | ReDoc: `/redoc`
     """)
+
+st.markdown("---")
+st.subheader("Explore the training data")
+st.caption("Interactive class counts from the bundled sample dataset; this is not a model performance measure.")
+try:
+    import pandas as pd
+    import plotly.express as px
+
+    @st.cache_data(show_spinner=False)
+    def _load_class_counts():
+        frame = pd.read_csv(BASE_DIR / "data" / "loan_cleaned.csv", sep="\t", usecols=["Risk_Flag"])
+        counts = frame["Risk_Flag"].value_counts().rename_axis("Dataset label").reset_index(name="Applicants")
+        counts["Dataset label"] = counts["Dataset label"].map({0: "Non-default label", 1: "Default label"}).fillna(counts["Dataset label"].astype(str))
+        return counts
+
+    counts = _load_class_counts()
+    chart_col, note_col = st.columns([1.25, 1])
+    with chart_col:
+        class_fig = px.pie(counts, names="Dataset label", values="Applicants", hole=0.62,
+                           color_discrete_sequence=["#45c2b1", "#ff8b72"],
+                           template="plotly_dark", title="Sample label mix")
+        class_fig.update_traces(textposition="inside", textinfo="label+percent",
+                                hovertemplate="%{label}<br>Applicants: %{value:,}<br>Share: %{percent}<extra></extra>")
+        class_fig.update_layout(height=350, legend_title_text="Dataset labels")
+        st.plotly_chart(class_fig, use_container_width=True)
+    with note_col:
+        st.metric("Sample rows", f"{int(counts['Applicants'].sum()):,}")
+        st.markdown("The chart reports class counts in the bundled training dataset. It does not show model accuracy, approval quality, calibration, or fairness. Use the Model and Explainability pages to inspect their respective exploratory views.")
+except (FileNotFoundError, ValueError, ImportError) as exc:
+    st.info(f"Training data chart is unavailable in this deployment: {exc}")
 
 st.sidebar.success("Select a page above")
 st.sidebar.markdown("---")

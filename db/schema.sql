@@ -39,6 +39,18 @@ CREATE TABLE IF NOT EXISTS audit_log (
     details     TEXT
 );
 
+-- Idempotent source audit for streamed loan applications. PAN is never stored raw.
+CREATE TABLE IF NOT EXISTS loan_application_audit (
+    application_id  TEXT PRIMARY KEY,
+    applicant_id    TEXT NOT NULL,
+    pan_hash        TEXT NOT NULL,
+    event_timestamp TIMESTAMPTZ NOT NULL,
+    payload         JSONB NOT NULL,
+    ingested_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_loan_application_audit_applicant_time
+    ON loan_application_audit (applicant_id, event_timestamp DESC);
+
 -- Indexes for performance
 CREATE INDEX IF NOT EXISTS idx_predictions_timestamp ON predictions(timestamp DESC);
 CREATE INDEX IF NOT EXISTS idx_predictions_decision  ON predictions(decision);

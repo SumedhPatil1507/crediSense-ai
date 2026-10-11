@@ -6,6 +6,7 @@ PSI < 0.1: No drift | 0.1-0.2: Moderate | > 0.2: Significant drift
 import numpy as np
 import pandas as pd
 from pathlib import Path
+from src.telemetry import traced_predict_proba
 
 BASE_DIR = Path(__file__).resolve().parents[1]
 
@@ -83,7 +84,7 @@ def get_training_score_distribution() -> np.ndarray:
                                             stratify=df["Risk_Flag"], random_state=42)
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
-            scores = model.predict_proba(X_test)[:, 1]
+            scores = traced_predict_proba(model, X_test, operation="drift_monitor")[:, 1]
         return scores
     except Exception:
         return np.array([])

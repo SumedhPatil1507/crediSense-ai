@@ -65,6 +65,16 @@ class TestFeatureEngineering:
         assert result.iloc[0]["low_income_flag"] == 1
         assert result.iloc[1]["low_income_flag"] == 0
 
+    def test_low_income_flag_is_independent_of_batch_composition(self):
+        from src.feature_engineering import create_features
+        applicant = {"Income": 0.25, "Age": 0.3, "Experience": 0.2,
+                     "CURRENT_JOB_YRS": 2, "CURRENT_HOUSE_YRS": 3}
+        alone = create_features(pd.DataFrame([applicant])).iloc[0]["low_income_flag"]
+        with_very_high_income = create_features(pd.DataFrame([
+            applicant, {**applicant, "Income": 1.0}
+        ])).iloc[0]["low_income_flag"]
+        assert alone == with_very_high_income == 1
+
 
 # ── Model Prediction ───────────────────────────────────────────────────────────
 

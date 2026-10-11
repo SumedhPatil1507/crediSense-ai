@@ -14,11 +14,14 @@ Design:
 from __future__ import annotations
 
 import logging
+import re
 import threading
 from dataclasses import dataclass
 from typing import Any
 
 logger = logging.getLogger(__name__)
+
+from src.telemetry import traced_span
 
 # ── Data Structures ───────────────────────────────────────────────────────────
 
@@ -32,6 +35,7 @@ class RetrievedClause:
     bi_score: float       # cosine similarity from ChromaDB (lower = more similar for distance)
     cross_score: float    # cross-encoder relevance score (higher = more relevant)
     rank: int             # final rank (1 = most relevant)
+    chunk_id: str = ""    # stable ChromaDB document ID
 
     @property
     def citation(self) -> str:
@@ -49,6 +53,7 @@ class RetrievedClause:
             "source": self.source,
             "page": self.page,
             "clause_id": self.clause_id,
+            "chunk_id": self.chunk_id,
             "citation": self.citation,
             "cross_score": round(self.cross_score, 4),
             "rank": self.rank,
@@ -122,6 +127,18 @@ class RegulatoryRetriever:
         return self._collection
 
     def retrieve(self, query: str, filter_source: str | None = None) -> list[RetrievedClause]:
+        """Trace vector + lexical candidate retrieval and reranking."""
+        with traced_span(
+            "chromadb.hybrid_search",
+            **{"db.system": "chromadb", "db.operation.name": "query",
+               "rag.query.length": len(query), "rag.filter_source": filter_source or ""},
+        ) as span:
+            clauses = self._retrieve_hybrid(query, filter_source)
+            span.set_attribute("rag.retrieved.count", len(clauses))
+            span.set_attribute("rag.retrieved.chunk_ids", ",".join(c.chunk_id for c in clauses))
+            return clauses
+
+    def _retrieve_hybrid(self, query: str, filter_source: str | None = None) -> list[RetrievedClause]:
         """
         Retrieve and rerank the most relevant regulatory clauses for a query.
 
@@ -156,6 +173,7 @@ class RegulatoryRetriever:
         docs = results["documents"][0]
         metas = results["metadatas"][0]
         distances = results["distances"][0]
+        chunk_ids = (results.get("ids") or [[]])[0]
 
         if not docs:
             return []
@@ -176,14 +194,28 @@ class RegulatoryRetriever:
 
         # ── Step 3: Sort by cross-encoder score ───────────────────────────
         ranked = sorted(
-            zip(docs, metas, distances, scores),
+            zip(docs, metas, distances, scores, chunk_ids),
             key=lambda x: x[3],
             reverse=True,
         )
 
         # Filter by minimum score and take top_n
         clauses: list[RetrievedClause] = []
-        for rank, (doc, meta, dist, score) in enumerate(ranked[:self.top_n], start=1):
+        # Add a deterministic lexical signal to the semantic cross-encoder score.
+        # This gives exact clause terms a chance to rank when embedding similarity is broad.
+        query_terms = {t for t in re.findall(r"[a-z0-9]+", query.lower()) if len(t) > 2}
+        lexical = []
+        for doc, *_ in ranked:
+            terms = set(re.findall(r"[a-z0-9]+", doc.lower()))
+            lexical.append(len(query_terms & terms) / max(1, len(query_terms)))
+        max_lexical = max(lexical, default=0.0)
+        fused = []
+        for item, lexical_score in zip(ranked, lexical):
+            normalized_lexical = lexical_score / max_lexical if max_lexical else 0.0
+            fused.append((*item, item[3] + 0.15 * normalized_lexical))
+        ranked = sorted(fused, key=lambda x: x[5], reverse=True)
+
+        for rank, (doc, meta, dist, score, chunk_id, fused_score) in enumerate(ranked[:self.top_n], start=1):
             if score < self.min_cross_score:
                 continue
             clauses.append(
@@ -195,6 +227,7 @@ class RegulatoryRetriever:
                     bi_score=float(1.0 - dist),
                     cross_score=float(score),
                     rank=rank,
+                    chunk_id=str(chunk_id),
                 )
             )
 
@@ -235,7 +268,7 @@ class RegulatoryRetriever:
         total = 0
         for c in clauses:
             block = (
-                f"[{c.rank}] {c.citation}\n"
+                f"[{c.rank}] [chunk:{c.chunk_id}] {c.citation}\n"
                 f"{c.text}\n"
             )
             if total + len(block) > max_chars:

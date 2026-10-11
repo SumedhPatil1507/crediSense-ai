@@ -1,6 +1,8 @@
 # CrediSense AI
 
-A production-grade, enterprise-ready **Credit Risk Scoring System** with full MLOps infrastructure, regulatory compliance, AES-256 encryption, fairness auditing, Indian banking standards alignment, and a **Regulatory RAG Copilot** powered by LangGraph + ChromaDB.
+A **Credit Risk Scoring System prototype** with a machine learning pipeline, explainability and fairness analysis tools, a regulatory document assistant, and experimental streaming and feature-store components.
+
+> **Use limitation:** This repository is a demonstration and is not validated or approved for real credit underwriting. Its sample metrics, fairness outputs, regulatory references, and controls do not establish legal compliance or production readiness. Review the [model card](docs/MODEL_CARD.md) before using outputs.
 
 **Live App:** https://credisense-ai-uzzvdsxuuxdbocfwxhmqcc.streamlit.app/
 
@@ -8,40 +10,40 @@ A production-grade, enterprise-ready **Credit Risk Scoring System** with full ML
 
 ---
 
-## Model Performance & Interpretability Proofs
+## Existing model artifacts
 
 ### ROC-AUC & Precision-Recall Curves
 
 ![Model Evaluation](assets/model_evaluation.png)
 
-The LightGBM model achieves ROC-AUC ≈ 0.97 and Gini ≈ 0.94 on a stratified 20% holdout of 50,400 applicants, far exceeding the industry benchmark of 0.75 for credit scoring models. The Precision-Recall curve (PR-AUC ≈ 0.72) demonstrates strong discrimination on the imbalanced 12% default-rate dataset, where a naive baseline PR-AUC would be only 0.12.
+The repository includes a model evaluation image and a separate dataset analysis. Treat these as historical artifacts, not current release metrics. Training now writes a hash-linked holdout report, but the split is random rather than temporal and does not prove production generalization. Do not infer production performance from the image.
 
 ### SHAP Global Feature Importance
 
 ![SHAP Beeswarm](assets/shap_beeswarm.png)
 
-Income stability, experience ratio, and income per job year are the dominant drivers of default risk — applicants with low income combined with short tenure consistently receive high positive SHAP values (pushing toward rejection). The beeswarm plot shows clean separation between low-income (red dots, high SHAP) and high-income (blue dots, low SHAP) profiles, confirming the model has learned economically meaningful signal rather than noise.
+The SHAP plot is an exploratory visualization of one model artifact. Feature attributions describe model behavior; they do not establish causal effects or prove that a decision is appropriate.
 
-### Fairness Audit — ECOA 4/5ths Rule Compliance
+### Fairness analysis (screening only)
 
 ![Fairness Audit](assets/fairness_audit.png)
 
-The Disparate Impact Ratio (DIR) across all demographic proxy subgroups (house ownership, age group, marital status) meets or exceeds the ECOA 4/5ths compliance threshold of 0.80, confirming the model does not systematically discriminate against protected classes. Any subgroup falling below the threshold triggers an automated adverse action notice with SHAP-attributed reasons, ensuring full FCRA right-to-explanation compliance.
+The image shows exploratory subgroup metrics for selected proxy attributes. These checks do not determine legal compliance, cover every protected group, or rule out individual or systemic harm. A qualified review using the applicable jurisdiction, representative data, and approved methodology is required before any real use.
 
 ---
 
-## Enterprise Capabilities
+## Capabilities in this prototype
 
 | Capability | Implementation |
 |---|---|
 | ML Model | LightGBM, hyperparameter tuning, class imbalance handling |
 | Explainability | SHAP beeswarm, waterfall, dependence, interaction heatmap, fairness audit |
 | AES-256 Encryption | Field-level encryption with PBKDF2 key derivation (cryptography library) |
-| Strict PII Masking | Bucketed categories + SHA-256 hashing — raw values never stored |
-| Fairness Audit | Subgroup metrics, Disparate Impact Ratio (4/5ths rule), ECOA compliance |
-| Regulatory Compliance | RBI IT Framework + DPDP Act 2023 compliance checklists |
-| **Regulatory RAG Copilot** | **LangGraph agent + ChromaDB + cross-encoder reranker — cited compliance Q&A** |
-| **Adverse Action (RAG)** | **ECOA/FCRA notices with inline citations to specific retrieved regulation clauses** |
+| PII Handling | Some masking and hashing helpers; full data lifecycle controls are not implemented |
+| Fairness Analysis | Exploratory subgroup metrics and disparate impact screening |
+| Regulatory References | Checklists and source-document retrieval; no legal compliance certification |
+| **Regulatory RAG Copilot** | **Prototype LangGraph + ChromaDB document retrieval with citations for human review** |
+| **Adverse Action (RAG)** | **Demonstration notices and retrieved reference passages; outputs require legal review** |
 | Credit Bureau Interface | CIBIL/Experian aggregator (mock + live API ready) |
 | Model Registry | S3-compatible cloud storage (AWS/MinIO) with local JSON fallback |
 | Confidence Intervals | Bootstrap 95% CI on every prediction |
@@ -57,12 +59,97 @@ The Disparate Impact Ratio (DIR) across all demographic proxy subgroups (house o
 | Live Data | World Bank API + RBI repo rate + RSS news feeds |
 | Stress Testing | Scenario analysis (recession, rate hike, income shock) |
 | PDF Reports | ReportLab with CI, explanation, adverse notice |
+| Point-in-Time Features | Feast feature views for utilization, payment velocity, and debt-to-income |
+| Streaming Ingestion | Kafka application consumer with PostgreSQL audit and Redis cache before offset commit |
+
+### Streaming and Feature Store
+
+The Feast repository is configured by `feature_store.yaml`; definitions live in
+`feature_repo/features.py` and are exposed to the root-level Feast CLI through
+`features.py`. Supply timestamped rows in
+`data/credit_feature_events.parquet` with applicant identifiers, hashed PAN,
+feature values, `event_timestamp`, and `created_timestamp`. Historical retrieval
+uses Feast `get_historical_features`, which joins only feature events visible at
+each entity timestamp. Retrieval enables `filter_by_created_timestamp=True`, so
+late-arriving corrections created after the application timestamp cannot leak
+into earlier training rows. The configured online store uses Redis at
+`localhost:6379` by default.
+
+The Streamlit **Feature Streaming** page (`8_Feature_Streaming.py`) provides
+interactive Plotly timelines and latest-value comparisons by applicant. It reads
+the local Feast parquet history and offers synthetic demo data until that file is
+present. Create it with `python scripts/generate_demo_feature_events.py`.
+
+Run `dotenv -f .env run -- feast apply` before first use, then
+`dotenv -f .env run -- python -m src.streaming.kafka_consumer` to consume
+`credit.applications.v1`. Configure `KAFKA_BOOTSTRAP_SERVERS`, `DATABASE_URL`
+(PostgreSQL), `REDIS_URL`, `FEAST_REDIS_CONNECTION_STRING`, and a high-entropy
+`PAN_HASH_SECRET`. Create the
+`loan_application_audit` table from `db/schema.sql`. Each message is audited
+with raw PAN removed, then its features are written to Redis; its Kafka offset
+is committed only when PostgreSQL audit and all Feast Redis online view writes
+succeed. Processing is idempotent by `application_id` in PostgreSQL, and a
+Redis timestamp guard keeps late feature events from regressing the online
+snapshot. Compose applies the Feast repository before starting the consumer.
+The root `features.py` shim is needed because Feast CLI discovers definitions
+from the configured repository root.
+
+For the broader engineering workflow, see [the runbook](docs/RUNBOOK.md),
+[the data contract](docs/DATA_CONTRACT.md), and [the model card](docs/MODEL_CARD.md).
+Generate synthetic Feast input with `python scripts/generate_demo_feature_events.py`.
+For local services, copy `.env.example` to `.env` and run `docker compose up -d postgres redis kafka`;
+PostgreSQL initializes `db/schema.sql` on first volume creation. Run `pytest tests -q`
+for the full test suite.
+
+### Heterogeneous R-GCN risk signals
+
+`src/gnn_risk.py` defines `applicant`, `employer`, `address`, and `phone_hash`
+nodes and a two-layer `HeteroConv` model built from relation-specific R-GCN
+convolutions. It predicts a default probability and a syndicate-risk score.
+The graph includes the required `employed_at`, `shares_address`, and `co_signed`
+relations, plus reverse edges and optional `shares_phone` edges so phone-hash
+nodes can participate in message passing. Training uses `applicant_id` (or `Id`),
+`employer_id`, `address_id`, hashed `phone_hash`, and
+`co_signed_applicant_id`. Missing employer/address links stay unconnected;
+occupation and city are not treated as shared employers or addresses. Phone
+values must already be hashed.
+
+Install the optional stack with `pip install -r requirements-gnn.txt`, configure
+`NEO4J_URI`, `NEO4J_USERNAME`, `NEO4J_PASSWORD`, and `NEO4J_DATABASE`, then run
+`python scripts/train_gnn_credit.py`. The CLI writes a checkpoint to
+`artifacts/gnn_credit.pt` and writes `rgcn_embedding`,
+`rgcn_default_probability`, `rgcn_syndicate_risk_score`, and model metadata onto
+Neo4j `:applicant` nodes. Use `--skip-neo4j-write` to train without exporting.
+If no `Syndicate_Risk` label exists, the auxiliary target is the observed
+default fraction among linked applicants; it is a weak training target, not a
+validated syndicate-default label. With no relationship data, applicants are
+unlinked and the auxiliary target falls back to the training-set default rate;
+provide verified relationship IDs for meaningful graph predictions.
+
+Add the stable internal `applicant_id` to API requests to retrieve stored graph
+scores. `/predict` returns them beside (and separately from) LightGBM's decision
+probability; `/explain` returns the graph signal alongside the LightGBM SHAP
+drivers. The RAG agent includes the signal as attribution context, not as a
+standalone adverse-action reason. Graph probabilities are uncalibrated model
+outputs and require temporal, out-of-sample, subgroup, and governance validation
+before influencing credit decisions.
 
 ---
 
 ## Regulatory RAG Copilot
 
-The Chatbot page's **Regulatory Copilot** tab is a production RAG system that lets analysts ask compliance questions about specific credit decisions and get cited answers — not canned responses.
+The Chatbot page's **Regulatory Copilot** tab is a retrieval-augmented assistant built with LangGraph and ChromaDB. Every returned factual or regulatory assertion must cite a retrieved Chroma chunk as `[chunk:<chunk_id>]`; unsupported claims, citations to chunks outside the current retrieval, and statutory limits absent from the cited text route to a neutral fallback response. The graph nodes, Chroma hybrid retrieval/reranking, and API credit-risk score calls emit OpenTelemetry spans. Configure an OpenTelemetry SDK/exporter in the host service to export spans.
+
+Guardrails validate evidence against the retrieved context. They do not verify that the bundled seed clauses reproduce current primary law. Treat the seed corpus as a development source and review it against official RBI and India Code publications before production use; have qualified compliance counsel verify legal conclusions.
+
+Run the 50-query RAGAS audit with an evaluator API key:
+
+```bash
+pip install -r requirements-rag-eval.txt
+OPENAI_API_KEY=... python -m eval.ragas_suite --output eval/reports/ragas_audit.json
+```
+
+The JSON report includes Context Precision, Context Recall, Faithfulness, and Answer Relevancy summaries and per-query output. Scores measure the copilot against `src/rag_ingest.py`'s seed text; they are not a statutory accuracy certification.
 
 ```
 Analyst Query / Rejected Application
@@ -70,12 +157,12 @@ Analyst Query / Rejected Application
           ▼
    [intent_router]          keyword classifier — no LLM call needed
           │
-          ├─► adverse_action ──► [retrieve_clauses] ──► [draft_notice]
-          │                                              cited ECOA/FCRA notice
-          └─► compliance_check ─► [retrieve_clauses] ──► [cited_answer]
-                                                          "Is this compliant?"
+          └─► [retrieve_clauses] ──► [generate] ──► [validate_response]
+                                                       │             │
+                                            cited claim passes   [guardrail_fallback]
+                                                       └──────► final response
           ▼
-   ChromaDB (cosine ANN, top-20 candidates)
+   ChromaDB (semantic candidates + lexical fusion)
           │
           ▼
    cross-encoder/ms-marco-MiniLM-L-6-v2  (rerank → top-5)
@@ -100,11 +187,11 @@ python -m src.ingest_regulations --stats  # chunk counts by source
 python -m src.ingest_regulations --test "adverse action notice requirements"
 ```
 
-**Sample interaction:**
+**Fallback behavior:**
 
-> **Analyst:** Is this rejection compliant with ECOA Regulation B?
+> **Analyst:** Does the available source establish a deadline that was not retrieved?
 >
-> **Copilot:** The decision is compliant provided the adverse action notice includes the four most significant score factors [ECOA Reg B · §1002.9(b)]. The notice must be delivered within 30 days of the completed application [ECOA Reg B · §1002.9(a)]. For credit-score-based decisions, you must disclose the specific reasons — generic statements such as "did not meet our criteria" are explicitly prohibited [ECOA Reg B · §1002.9(b)]. The applicant also has a right to request a free credit report copy within 60 days [FCRA · §615(a)].
+> **Copilot:** I can’t provide a regulatory conclusion because the available retrieved sources did not verify every claim. Please narrow the question to a cited source or have Compliance review the source material.
 >
 > *📚 4 regulatory clauses retrieved · Relevance scores: 0.847, 0.791, 0.743, 0.698*
 
@@ -156,27 +243,24 @@ PROMETHEUS_ENABLED=true            # Metrics endpoint
 
 ---
 
-## Regulatory Compliance
+## Regulatory and fairness review
 
-| Framework | Score | Key Controls |
-|---|---|---|
-| RBI IT Framework 2023 | 75%+ | Encryption, audit trail, model validation, BCP |
-| DPDP Act 2023 | 75%+ | Data minimisation, right to erasure, PII masking |
-| ECOA / FCRA | Full | Adverse action notices with specific reasons + RAG inline citations |
-| Basel II EL | Full | PD × LGD × EAD cost-benefit framework |
-| 4/5ths Rule | Full | Disparate Impact Ratio fairness audit |
+| Capability | Status |
+|---|---|
+| Regulatory references | Checklists and document retrieval; not a compliance determination |
+| Adverse-action examples | Demonstrations only; require qualified legal review |
+| Fairness metrics | Exploratory subgroup screening; not proof of fairness |
 
 ---
 
-## Model Performance
+## Model performance
 
-| Metric | Score | Industry Benchmark |
-|--------|-------|-------------------|
-| ROC-AUC | ~0.97 | > 0.75 = good |
-| Gini | ~0.94 | > 0.60 = good |
-| KS Statistic | ~0.75 | > 0.40 = good |
-| PR-AUC | ~0.72 | Imbalanced baseline ~0.12 |
-| Brier Score | ~0.08 | Lower = better |
+The stored charts and historical analysis are not current performance claims.
+`python -m src.train` generates an ignored report at
+`reports/generated/model_evaluation.json` with data and model hashes, a prior
+baseline, calibration, threshold metrics, bootstrap intervals, and exploratory
+subgroup results. Its stratified random split is not temporal validation; see
+the [model card](docs/MODEL_CARD.md).
 
 ---
 
@@ -248,7 +332,7 @@ credisense-ai/
 ## Run Locally
 
 ```bash
-pip install -r requirements.txt
+pip install -r app/requirements.txt
 streamlit run app/app.py
 
 # FastAPI + Prometheus
@@ -304,11 +388,20 @@ GROQ_API_KEY=<key>                   # Llama-3.1-8B-instant (secondary)
 
 ## Deploy to Streamlit Cloud
 
-```bash
-git add .
-git commit -m "your message"
-git push
-```
+The multi-page Streamlit app entry point is `app/app.py`. The app-specific
+`app/requirements.txt` keeps Community Cloud's UI environment focused; it
+includes Plotly and the optional regulatory copilot stack, while backend-only
+Feast/Kafka/PostgreSQL and RAGAS dependencies remain in the root requirements.
+The app includes interactive Plotly charts on the Model, Explainability,
+Operations, Stress Testing, Logs, Compliance, and Feature Streaming pages. The
+Feature Streaming page offers synthetic demo data when no feature history is
+available.
+
+To deploy or update it, connect the public repository
+`SumedhPatil1507/crediSense-ai` in Streamlit Community Cloud and select branch
+`main` with entry point `app/app.py`. Once the app is connected, commits pushed
+to its tracked GitHub branch trigger an app update. The existing app URL is
+[CrediSense AI on Streamlit](https://credisense-ai-uzzvdsxuuxdbocfwxhmqcc.streamlit.app/).
 
 Add secrets in Streamlit Cloud → Manage App → Settings → Secrets.
 

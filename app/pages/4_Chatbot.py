@@ -23,6 +23,7 @@ from src.confidence_intervals import bootstrap_ci
 from src.adverse_action import generate_adverse_action
 from src.hitl_queue import enqueue as hitl_enqueue
 from src.config import THRESHOLD_APPROVE, THRESHOLD_REVIEW
+from src.telemetry import traced_predict_proba
 
 model = joblib.load(BASE_DIR / "models/model.pkl")
 with open(BASE_DIR / "models/columns.json") as f:
@@ -141,7 +142,7 @@ with tabs[0]:
 
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
-            prob = float(model.predict_proba(df_in)[0][1])
+            prob = float(traced_predict_proba(model, df_in, operation="chatbot_prediction")[0][1])
 
         with st.spinner("Computing confidence interval…"):
             _, ci_lower, ci_upper = bootstrap_ci(model, df_in, n_bootstrap=100)

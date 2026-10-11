@@ -21,6 +21,13 @@ data/predictions.csv
 data/feedback_log.csv
 data/audit_log.csv
 data/usage_log.csv
+data/feast_registry.db*
+data/credit_feature_events.parquet
+artifacts/
+reports/generated/
+.pytest_cache/
+.coverage
+htmlcov/
 
 # Streamlit secrets (never commit real keys)
 .streamlit/secrets.toml

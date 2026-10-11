@@ -18,6 +18,7 @@ from src.explainability import get_explainer_and_values
 from src.data_loader import load_data
 from src.preprocessing import clean_data
 from src.fairness import subgroup_metrics, disparate_impact_ratio
+from src.telemetry import traced_predict_proba
 
 model = joblib.load(BASE_DIR / "models/model.pkl")
 pre   = model.named_steps["preprocessor"]
@@ -102,7 +103,7 @@ try:
 
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
-            prob = float(model.predict_proba(sample.iloc[[idx]])[0][1])
+            prob = float(traced_predict_proba(model, sample.iloc[[idx]], operation="explainability_sample")[0][1])
 
         k1, k2, k3 = st.columns(3)
         k1.metric("Risk Probability", f"{prob:.2%}")
@@ -190,7 +191,7 @@ try:
         st.subheader("SHAP Distribution by Decision")
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
-            all_probs = model.predict_proba(sample)[:, 1]
+            all_probs = traced_predict_proba(model, sample, operation="explainability_distribution")[:, 1]
         decisions = ["Approve" if p < 0.3 else "Review" if p < 0.6 else "Reject" for p in all_probs]
 
         sel_feat_int = st.selectbox("Feature to compare", display_names, key="int_feat")

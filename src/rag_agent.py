@@ -28,9 +28,13 @@ from __future__ import annotations
 
 import logging
 import os
+import re
+from functools import wraps
 from typing import Any, TypedDict
 
 logger = logging.getLogger(__name__)
+
+from src.telemetry import traced_span
 
 # ── State Definition ──────────────────────────────────────────────────────────
 
@@ -41,6 +45,7 @@ class AgentState(TypedDict, total=False):
     application: dict[str, Any]   # rejected application details (optional)
     denial_reasons: list[str]     # SHAP-derived reasons (optional)
     risk_score: float
+    gnn_scores: dict[str, Any]
 
     # Routing
     intent: str                   # "adverse_action" | "compliance_check" | "general_query"
@@ -54,6 +59,9 @@ class AgentState(TypedDict, total=False):
     citations: list[str]
     notice: str                   # formatted adverse-action notice (adverse_action intent only)
     error: str
+    guardrail_passed: bool
+    guardrail_errors: list[str]
+    fallback_used: bool
 
 
 # ── LLM Loader ───────────────────────────────────────────────────────────────
@@ -112,11 +120,14 @@ RULES:
 4. List the specific denial reasons with their regulatory basis.
 5. Include the applicant's rights section citing the specific regulation that grants each right.
 6. Be formal, precise, and legally accurate.
+7. Treat graph model scores as contextual risk attribution only. Do not present
+   a network score alone as a principal adverse-action reason.
 """
 
 _ADVERSE_ACTION_HUMAN = """
 APPLICATION DETAILS:
 Risk Score: {risk_score}
+Graph Risk Attribution: {gnn_context}
 Decision: Application Declined
 Denial Reasons:
 {reasons_block}
@@ -159,10 +170,11 @@ Your job is to answer compliance questions with precise citations to specific re
 
 RULES:
 1. Answer directly and concisely.
-2. Cite EVERY regulatory claim inline using the format [Source · ClauseID].
+2. Cite EVERY factual or regulatory claim inline using the exact Chroma citation format [chunk:<chunk_id>] immediately before the sentence-ending punctuation.
 3. Use ONLY the regulatory text in CONTEXT. Clearly state if something is not covered.
 4. Structure answers as: Direct Answer → Regulatory Basis → Specific Requirements → Gaps/Risks.
 5. Flag any compliance gaps explicitly as ⚠️ COMPLIANCE GAP.
+6. Never infer a statutory deadline, threshold, penalty, or duty that is absent from the cited chunk.
 """
 
 _COMPLIANCE_HUMAN = """
@@ -175,12 +187,30 @@ APPLICATION CONTEXT (if relevant):
 REGULATORY CONTEXT (retrieved clauses):
 {context_block}
 
-Provide a cited compliance analysis. For each claim, cite the specific clause from the context above.
+Provide a cited compliance analysis. For each claim, cite the exact [chunk:<chunk_id>] shown in the context above, immediately before sentence-ending punctuation. Do not make claims that the context does not establish.
 """
+
+
+def _traced_node(name: str):
+    """Add a LangGraph node span without recording personal/application data."""
+    def decorate(function):
+        @wraps(function)
+        def wrapped(state: AgentState) -> AgentState:
+            with traced_span("langgraph.node", **{
+                "langgraph.node.name": name,
+                "rag.intent": state.get("intent", ""),
+            }) as span:
+                result = function(state)
+                span.set_attribute("rag.retrieved.count", len(result.get("retrieved_clauses", [])))
+                span.set_attribute("rag.guardrail.passed", bool(result.get("guardrail_passed", False)))
+                return result
+        return wrapped
+    return decorate
 
 
 # ── Node Functions ────────────────────────────────────────────────────────────
 
+@_traced_node("intent_router")
 def node_intent_router(state: AgentState) -> AgentState:
     """Classify the query intent without calling the LLM (fast keyword routing)."""
     query = (state.get("query") or "").lower()
@@ -208,6 +238,7 @@ def node_intent_router(state: AgentState) -> AgentState:
     return {**state, "intent": intent}
 
 
+@_traced_node("retrieve_clauses")
 def node_retrieve_clauses(state: AgentState) -> AgentState:
     """Retrieve relevant regulatory clauses from ChromaDB + cross-encoder rerank."""
     from src.rag_retriever import get_retriever
@@ -257,6 +288,7 @@ def node_retrieve_clauses(state: AgentState) -> AgentState:
         }
 
 
+@_traced_node("generate")
 def node_generate_response(state: AgentState) -> AgentState:
     """Generate the final response (LLM or template fallback)."""
     intent = state.get("intent", "general_query")
@@ -265,6 +297,7 @@ def node_generate_response(state: AgentState) -> AgentState:
     denial_reasons = state.get("denial_reasons", [])
     risk_score = state.get("risk_score", 0.0)
     application = state.get("application", {})
+    gnn_scores = state.get("gnn_scores") or application.get("gnn_scores") or {}
     retrieved_clauses = state.get("retrieved_clauses", [])
 
     llm, provider = _load_llm()
@@ -272,6 +305,7 @@ def node_generate_response(state: AgentState) -> AgentState:
     # ── Adverse Action Path ────────────────────────────────────────────────
     if intent == "adverse_action":
         reasons_block = "\n".join(f"  {i+1}. {r}" for i, r in enumerate(denial_reasons))
+        gnn_context = _format_gnn_attribution(gnn_scores)
 
         if llm is not None:
             try:
@@ -280,6 +314,7 @@ def node_generate_response(state: AgentState) -> AgentState:
                     SystemMessage(content=_ADVERSE_ACTION_SYSTEM),
                     HumanMessage(content=_ADVERSE_ACTION_HUMAN.format(
                         risk_score=f"{risk_score:.2%}",
+                        gnn_context=gnn_context,
                         reasons_block=reasons_block,
                         context_block=context_block,
                     )),
@@ -292,7 +327,7 @@ def node_generate_response(state: AgentState) -> AgentState:
 
         # Template fallback
         notice = _template_adverse_action(
-            risk_score, denial_reasons, retrieved_clauses
+            risk_score, denial_reasons, retrieved_clauses, gnn_scores
         )
         return {**state, "notice": notice, "response": notice}
 
@@ -306,6 +341,10 @@ def node_generate_response(state: AgentState) -> AgentState:
             f"Risk Score: {risk_score:.2%} | "
             f"Decision: {application.get('decision', 'N/A')}"
         )
+        if gnn_scores:
+            app_context += " | " + _format_gnn_attribution(gnn_scores)
+    elif gnn_scores:
+        app_context = _format_gnn_attribution(gnn_scores)
 
     if llm is not None:
         try:
@@ -329,12 +368,154 @@ def node_generate_response(state: AgentState) -> AgentState:
     return {**state, "response": response}
 
 
+_CHUNK_CITATION = re.compile(r"\[chunk:([^\]]+)\]", re.IGNORECASE)
+_NUMBER_OR_LIMIT = re.compile(
+    r"\b\d+(?:\.\d+)?\s*(?:(?:business days?|days?|hours?|months?|years?|"
+    r"percent|rupees?|inr|lakhs?|crores?)\b|%)", re.I
+)
+_ASSERTION_CUES = re.compile(
+    r"\b(?:is|are|was|were|has|have|must|shall|should|may|can|within|under|requires?|"
+    r"prohibits?|entitl(?:ed|ement)|right|obligation|statutory|section|act|framework|"
+    r"compliant|noncompliant|lawful|unlawful|penalt(?:y|ies)|deadline|limit)\b", re.I
+)
+_STOP_WORDS = {
+    "the", "and", "for", "that", "this", "with", "from", "shall", "must", "may",
+    "are", "was", "were", "is", "has", "have", "can", "within", "under", "into",
+    "their", "they", "them", "such", "where", "when", "which", "will", "not", "any",
+}
+
+
+def validate_regulatory_output(response: str, clauses: list[dict[str, Any]]) -> list[str]:
+    """Fail closed on uncited claims, unknown chunk IDs, and unsupported limits.
+
+    Numeric statutory limits are accepted only when the exact limit is present in
+    the cited retrieved chunk. This prevents the model from filling gaps in the
+    corpus with remembered or guessed rules.
+    """
+    by_id = {
+        str(c.get("chunk_id", "")): {
+            "text": str(c.get("text", "")),
+            "source": str(c.get("source", "")),
+        }
+        for c in clauses if c.get("chunk_id")
+    }
+    errors: list[str] = []
+    for raw in re.split(r"(?<=[.!?])\s+(?!\[chunk:)|[\r\n]+", response or ""):
+        line = re.sub(r"^\s*(?:[-*•]\s*|\d+[.)]\s*)", "", raw).strip()
+        line = re.sub(r"\*\*|__|`", "", line).strip()
+        if not line or line.startswith("#") or line.endswith(":"):
+            continue
+        if not (_ASSERTION_CUES.search(line) or _NUMBER_OR_LIMIT.search(line)):
+            # Fail closed for ordinary declarative language too, not only phrases
+            # using specific regulatory keywords.
+            if len(re.findall(r"\b\w+\b", line)) < 4:
+                continue
+        cited_ids = _CHUNK_CITATION.findall(line)
+        if not cited_ids:
+            errors.append(f"Uncited assertion: {line[:100]}")
+            continue
+        claim = _CHUNK_CITATION.sub("", line)
+        claim_terms = {
+            t for t in re.findall(r"[a-z0-9]+", claim.lower())
+            if len(t) > 2 and t not in _STOP_WORDS
+        }
+        for chunk_id in cited_ids:
+            source_row = by_id.get(chunk_id)
+            if source_row is None:
+                errors.append(f"Citation references unknown Chroma chunk: {chunk_id}")
+                continue
+            source = source_row["text"]
+            source_lower = source.lower()
+            source_terms = set(re.findall(r"[a-z0-9]+", source_lower))
+            overlap = claim_terms & source_terms
+            if claim_terms and len(overlap) < min(3, len(claim_terms)):
+                errors.append(f"Claim is not grounded in cited chunk {chunk_id}")
+            claim_lower = claim.lower()
+            source_name = source_row["source"].lower()
+            if ("dpdp" in claim_lower or "digital personal data protection" in claim_lower
+                    or "data principal" in claim_lower or "data fiduciary" in claim_lower):
+                if "dpdp" not in source_name and "digital personal data protection" not in source_name:
+                    errors.append(f"DPDP claim cites a non-DPDP source: {chunk_id}")
+            if "rbi" in claim_lower and "rbi" not in source_name:
+                errors.append(f"RBI claim cites a non-RBI source: {chunk_id}")
+            for limit in _NUMBER_OR_LIMIT.findall(claim):
+                if re.sub(r"\s+", "", limit.lower()) not in re.sub(r"\s+", "", source_lower):
+                    errors.append(f"Statutory limit is absent from cited chunk {chunk_id}: {limit}")
+    return list(dict.fromkeys(errors))
+
+
+_guardrails_guard = None
+
+
+def _run_guardrails_ai(response: str, clauses: list[dict[str, Any]]) -> list[str]:
+    """Run the same evidence policy through Guardrails AI when installed."""
+    global _guardrails_guard
+    try:
+        from guardrails import Guard
+        from guardrails.validators import FailResult, PassResult, Validator, register_validator
+    except ImportError:
+        logger.warning("guardrails-ai is unavailable; deterministic evidence guard remains active")
+        return []
+
+    try:
+        if _guardrails_guard is None:
+            @register_validator(name="credisense-evidence-grounding", data_type="string")
+            class EvidenceValidator(Validator):
+                def __init__(self, on_fail: Any = "exception"):
+                    super().__init__(on_fail=on_fail)
+
+                def _validate(self, value: str, metadata: dict[str, Any]) -> Any:
+                    failures = validate_regulatory_output(value, metadata.get("clauses", []))
+                    if failures:
+                        return FailResult(error_message="; ".join(failures))
+                    return PassResult()
+
+            _guardrails_guard = Guard().use(EvidenceValidator(on_fail="exception"))
+        _guardrails_guard.validate(response, metadata={"clauses": clauses})
+        return []
+    except Exception as exc:
+        return [f"Guardrails AI validation failed: {exc}"]
+
+
+@_traced_node("validate_response")
+def node_validate_response(state: AgentState) -> AgentState:
+    """Validate claims and citation IDs before allowing a response to leave the graph."""
+    response = str(state.get("response", ""))
+    clauses = state.get("retrieved_clauses", [])
+    errors = validate_regulatory_output(response, clauses)
+    errors.extend(_run_guardrails_ai(response, clauses))
+    errors = list(dict.fromkeys(errors))
+    return {**state, "guardrail_passed": not errors, "guardrail_errors": errors}
+
+
+def route_after_guardrails(state: AgentState) -> str:
+    """Return the explicit safe branch for unsupported content."""
+    return "valid" if state.get("guardrail_passed", False) else "fallback"
+
+
+@_traced_node("guardrail_fallback")
+def node_guardrail_fallback(state: AgentState) -> AgentState:
+    """Replace unverified text with a neutral, non-legal conclusion."""
+    fallback = (
+        "I can’t provide a regulatory conclusion because the available retrieved "
+        "sources did not verify every claim. Please narrow the question to a cited "
+        "source or have Compliance review the source material."
+    )
+    return {
+        **state,
+        "response": fallback,
+        "notice": fallback if state.get("intent") == "adverse_action" else state.get("notice", ""),
+        "fallback_used": True,
+    }
+
+
 # ── Template Fallbacks (no LLM required) ─────────────────────────────────────
 
 def _template_adverse_action(
     risk_score: float,
     reasons: list[str],
     clauses: list[dict[str, Any]],
+    gnn_scores: dict[str, Any] | None = None,
 ) -> str:
     """Generate a structured adverse action notice using retrieved clauses as citations."""
     from datetime import datetime
@@ -361,12 +542,14 @@ def _template_adverse_action(
         for c in clauses[:6]
         if c.get("citation")
     )
+    graph_attribution = _format_gnn_attribution(gnn_scores) if gnn_scores else ""
 
     return f"""ADVERSE ACTION NOTICE
 {'='*60}
 Decision Date: {datetime.utcnow().strftime('%Y-%m-%d')}
 Decision:      APPLICATION DECLINED
 Risk Score:    {risk_score:.2%}
+{graph_attribution}
 
 PRINCIPAL REASONS FOR ADVERSE ACTION
 [As required by {ecoa_cit}]
@@ -409,6 +592,21 @@ This notice is generated in accordance with the Equal Credit Opportunity
 Act (ECOA), Fair Credit Reporting Act (FCRA), RBI IT Framework (2023),
 and Digital Personal Data Protection Act 2023.
 """
+
+
+def _format_gnn_attribution(scores: dict[str, Any]) -> str:
+    """Format graph outputs as a distinct, non-causal attribution signal."""
+    if not scores:
+        return "Graph risk attribution: not available for this applicant."
+    parts = ["Graph risk attribution (Heterogeneous R-GCN):"]
+    default_score = scores.get("default_probability")
+    syndicate_score = scores.get("syndicate_risk_score")
+    if default_score is not None:
+        parts.append(f"default probability={float(default_score):.2%}")
+    if syndicate_score is not None:
+        parts.append(f"syndicate risk score={float(syndicate_score):.2%}")
+    parts.append(f"model={scores.get('model_version', 'unknown')}; contextual model signal only")
+    return " ".join(parts)
 
 
 def _template_compliance_answer(query: str, clauses: list[dict[str, Any]]) -> str:
@@ -475,15 +673,19 @@ def _template_compliance_answer(query: str, clauses: list[dict[str, Any]]) -> st
     ]
 
     for c in clauses[:4]:
+        excerpt = c["text"][:400]
+        sentences = re.split(r"(?<=[.!?])\s+", excerpt.strip())
+        cited_sentences = []
+        for sentence in sentences:
+            match = re.match(r"^(.*?)([.!?])$", sentence.strip())
+            if match:
+                cited_sentences.append(f"{match.group(1)} [chunk:{c.get('chunk_id', '')}]{match.group(2)}")
+            elif sentence.strip():
+                cited_sentences.append(f"{sentence.strip()} [chunk:{c.get('chunk_id', '')}]")
         lines.append(
-            f"**[{c['rank']}] {c['citation']}**\n"
-            f"{c['text'][:400]}{'...' if len(c['text']) > 400 else ''}\n"
+            f"**[{c['rank']}] {c['citation']}** "
+            f"{' '.join(cited_sentences)}\n"
         )
-
-    lines.append(
-        "\n*Note: For a full LLM-powered analysis with synthesised reasoning, "
-        "configure OPENAI_API_KEY or GROQ_API_KEY in your environment.*"
-    )
 
     return "\n\n".join(lines)
 
@@ -500,11 +702,18 @@ def _build_graph():
         graph.add_node("intent_router",    node_intent_router)
         graph.add_node("retrieve_clauses", node_retrieve_clauses)
         graph.add_node("generate",         node_generate_response)
+        graph.add_node("validate_response", node_validate_response)
+        graph.add_node("guardrail_fallback", node_guardrail_fallback)
 
         graph.set_entry_point("intent_router")
         graph.add_edge("intent_router",    "retrieve_clauses")
         graph.add_edge("retrieve_clauses", "generate")
-        graph.add_edge("generate",          END)
+        graph.add_edge("generate", "validate_response")
+        graph.add_conditional_edges(
+            "validate_response", route_after_guardrails,
+            {"valid": END, "fallback": "guardrail_fallback"},
+        )
+        graph.add_edge("guardrail_fallback", END)
 
         return graph.compile()
     except ImportError:
@@ -533,6 +742,7 @@ def run_compliance_query(
     application: dict[str, Any] | None = None,
     denial_reasons: list[str] | None = None,
     risk_score: float = 0.0,
+    gnn_scores: dict[str, Any] | None = None,
 ) -> AgentState:
     """
     Run the regulatory RAG agent on a compliance question or adverse-action request.
@@ -551,6 +761,7 @@ def run_compliance_query(
         "application": application or {},
         "denial_reasons": denial_reasons or [],
         "risk_score": risk_score,
+        "gnn_scores": gnn_scores or (application or {}).get("gnn_scores", {}),
         "intent": "",
         "retrieved_clauses": [],
         "context_block": "",
@@ -573,6 +784,9 @@ def run_compliance_query(
     state = node_intent_router(initial)
     state = node_retrieve_clauses(state)
     state = node_generate_response(state)
+    state = node_validate_response(state)
+    if route_after_guardrails(state) == "fallback":
+        state = node_guardrail_fallback(state)
     return state
 
 
@@ -580,6 +794,7 @@ def draft_adverse_action_with_citations(
     prob: float,
     reasons: list[str],
     application: dict[str, Any] | None = None,
+    gnn_scores: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """
     High-level function called by adverse_action.py.
@@ -600,6 +815,7 @@ def draft_adverse_action_with_citations(
         application=application,
         denial_reasons=reasons,
         risk_score=prob,
+        gnn_scores=gnn_scores,
     )
 
     return {

@@ -8,6 +8,7 @@ import uuid
 import warnings
 from pathlib import Path
 from datetime import datetime
+from src.telemetry import traced_predict_proba
 
 BASE_DIR    = Path(__file__).resolve().parents[1]
 SHADOW_PATH = BASE_DIR / "data" / "shadow_log.csv"
@@ -38,12 +39,12 @@ def run_shadow(champion_model, challenger_model, df_input,
 
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        champ_prob = float(champion_model.predict_proba(df_input)[0][1])
+        champ_prob = float(traced_predict_proba(champion_model, df_input, operation="shadow_champion")[0][1])
 
     try:
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
-            chal_prob = float(challenger_model.predict_proba(df_input)[0][1])
+            chal_prob = float(traced_predict_proba(challenger_model, df_input, operation="shadow_challenger")[0][1])
     except Exception:
         chal_prob = None
 

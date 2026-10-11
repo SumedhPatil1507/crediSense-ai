@@ -22,6 +22,7 @@ from src.confidence_intervals import bootstrap_ci, interpret_ci
 from src.adverse_action import generate_adverse_action
 from src.report import generate_pdf_report, FPDF_AVAILABLE
 from src.config import THRESHOLD_APPROVE, THRESHOLD_REVIEW
+from src.telemetry import traced_predict_proba
 
 model = joblib.load(BASE_DIR / "models/model.pkl")
 with open(BASE_DIR / "models/columns.json") as f:
@@ -106,7 +107,7 @@ with tabs[0]:
 
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
-            prob = float(model.predict_proba(df_input)[0][1])
+            prob = float(traced_predict_proba(model, df_input, operation="streamlit_prediction")[0][1])
 
         with st.spinner("Computing confidence interval..."):
             _, ci_lower, ci_upper = bootstrap_ci(model, df_input, n_bootstrap=150)
@@ -258,7 +259,7 @@ with tabs[1]:
             df_w = build_full_input({"Income": inc_n, "Age": age_n, "Experience": exp_n}, cols)
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore")
-                p = float(model.predict_proba(df_w)[0][1])
+                p = float(traced_predict_proba(model, df_w, operation="scenario_comparison")[0][1])
             dec = "Approve" if p < THRESHOLD_APPROVE else "Review" if p < THRESHOLD_REVIEW else "Reject"
             results.append({"Scenario": label, "Income (LPA)": inc, "Age": ag,
                              "Experience (yrs)": ex, "Risk %": f"{p:.2%}", "Decision": dec, "_p": p})
@@ -374,7 +375,7 @@ with tabs[4]:
             df_t = load_dataset()
             X_t = df_t.drop(columns=["Risk_Flag"]); y_t = df_t["Risk_Flag"]
             _, X_te_t, _, y_te_t = train_test_split(X_t, y_t, test_size=0.2, stratify=y_t, random_state=42)
-            y_prob_t = model.predict_proba(X_te_t)[:, 1]
+            y_prob_t = traced_predict_proba(model, X_te_t, operation="threshold_analysis")[:, 1]
             results = threshold_analysis(y_te_t, y_prob_t)
             df_thresh = pd.DataFrame(results)
             fig_thresh = go.Figure()

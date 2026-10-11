@@ -3,6 +3,13 @@
 **CrediSense AI — Applied Credit Risk Scoring System**
 *Sumedh Patil | LightGBM on Indian Consumer Loan Data*
 
+> **Interpretation note:** This is a historical exploratory analysis, not a
+> current model release report, independent audit, legal opinion, or evidence
+> of compliance. Its reported metrics should be reproduced with the current
+> code, versioned data, and the generated holdout report before being relied on.
+> The repository's current training split is random and does not establish
+> temporal generalization.
+
 ---
 
 ## Abstract

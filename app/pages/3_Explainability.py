@@ -1,265 +1,278 @@
-import streamlit as st
-import joblib
-import warnings
-import pandas as pd
-import numpy as np
-import shap
-import matplotlib.pyplot as plt
-import plotly.express as px
-import plotly.graph_objects as go
-from pathlib import Path
+"""Interactive, source-aware batch scoring and explanation dashboard."""
+from __future__ import annotations
+
+import os
 import sys
+import warnings
+from pathlib import Path
+
+import joblib
+import numpy as np
+import pandas as pd
+import plotly.express as px
+import requests
+import streamlit as st
 
 BASE_DIR = Path(__file__).resolve().parents[2]
-sys.path.append(str(BASE_DIR))
+if str(BASE_DIR) not in sys.path:
+    sys.path.insert(0, str(BASE_DIR))
 
-from src.feature_engineering import create_features
+from src.config import THRESHOLD_APPROVE, THRESHOLD_REVIEW
+from src.database import get_predictions
 from src.explainability import get_explainer_and_values
-from src.data_loader import load_data
-from src.preprocessing import clean_data
-from src.fairness import subgroup_metrics, disparate_impact_ratio
+from src.feature_engineering import create_features
+from src.fairness import disparate_impact_ratio, subgroup_metrics
 from src.telemetry import traced_predict_proba
 
-model = joblib.load(BASE_DIR / "models/model.pkl")
-pre   = model.named_steps["preprocessor"]
-mod   = model.named_steps["model"]
-expected_cols = list(pre.feature_names_in_)
+st.set_page_config(page_title="Explainability | CrediSense AI", page_icon="📊", layout="wide")
 
 
-@st.cache_data
-def load_sample():
-    df = load_data(str(BASE_DIR / "data" / "loan_cleaned.csv"))
-    df = clean_data(df)
-    df = create_features(df)
-    df_feat = df.drop(columns=["Risk_Flag"], errors="ignore")
-    if "Id" not in df_feat.columns:
-        df_feat["Id"] = 0
-    for col in expected_cols:
-        if col not in df_feat.columns:
-            df_feat[col] = 0
-    return df_feat[expected_cols].head(200), df
+@st.cache_resource
+def load_model():
+    return joblib.load(BASE_DIR / "models" / "model.pkl")
 
 
-@st.cache_data
-def load_fairness_data():
-    from sklearn.model_selection import train_test_split
-    df = load_data(str(BASE_DIR / "data" / "loan_cleaned.csv"))
-    df = clean_data(df)
-    df = create_features(df)
-    _, df_test = train_test_split(df, test_size=0.1, stratify=df["Risk_Flag"], random_state=42)
-    return df_test.reset_index(drop=True)
+def configured_secret(name: str, default: str = "") -> str:
+    value = os.getenv(name, "")
+    if value:
+        return value
+    try:
+        return str(st.secrets.get(name, default))
+    except Exception:
+        return default
 
 
-st.set_page_config(layout="wide")
-st.title("Model Explainability & Fairness")
-st.caption("SHAP global + local explanations | Feature interactions | Fairness audit")
+def recent_prediction_rows() -> pd.DataFrame:
+    """Read the latest records actually scored by this app instance."""
+    records = get_predictions(limit=500)
+    if not records:
+        return pd.DataFrame()
+    df = pd.DataFrame(records)
+    aliases = {"income_norm": "Income", "age_norm": "Age", "experience_norm": "Experience"}
+    df = df.rename(columns=aliases)
+    return df
 
-try:
-    sample, df_full = load_sample()
-    explainer, sv, X_dense, feature_names = get_explainer_and_values(model, sample)
 
-    tabs = st.tabs([
-        "Global Importance",
-        "Single Prediction",
-        "Feature Dependence",
-        "Feature Interactions",
-        "Fairness Audit",
-    ])
+def fetch_live_rows(url: str, token: str = "") -> pd.DataFrame:
+    headers = {"Authorization": f"Bearer {token}"} if token else {}
+    response = requests.get(url, headers=headers, timeout=12)
+    response.raise_for_status()
+    payload = response.json()
+    if isinstance(payload, dict):
+        payload = payload.get("applications", payload.get("data", []))
+    if not isinstance(payload, list):
+        raise ValueError("Live endpoint must return a JSON list or an applications/data list.")
+    return pd.DataFrame(payload)
 
-    # ── TAB 1: SHAP Summary ────────────────────────────────────────────────────
-    with tabs[0]:
-        st.subheader("Global Feature Importance (SHAP Beeswarm)")
-        st.caption("Each dot = one applicant. Color = feature value. X-axis = impact on risk score.")
 
-        col_l, col_r = st.columns([2, 1])
-        with col_l:
-            shap.summary_plot(sv, X_dense, feature_names=feature_names, show=False,
-                              plot_size=(10, 6))
-            st.pyplot(plt.gcf())
-            plt.clf()
+def prepare_features(rows: pd.DataFrame, expected_cols: list[str]) -> tuple[pd.DataFrame, pd.DataFrame, list[str]]:
+    """Align uploaded/live application rows with the trained model's input contract."""
+    raw = rows.copy().reset_index(drop=True)
+    raw.columns = [str(c).strip() for c in raw.columns]
+    required = ["Income", "Age", "Experience"]
+    missing_required = [c for c in required if c not in raw.columns]
+    if missing_required:
+        raise ValueError("Missing required model inputs: " + ", ".join(missing_required))
 
-        with col_r:
-            # Bar chart of mean |SHAP| — top 15
-            mean_shap = np.abs(sv).mean(axis=0)
-            top_idx   = np.argsort(mean_shap)[::-1][:15]
-            df_imp = pd.DataFrame({
-                "Feature": [feature_names[i].replace("num__","").replace("cat__","") for i in top_idx],
-                "Mean |SHAP|": mean_shap[top_idx]
-            })
-            fig_bar = px.bar(df_imp, x="Mean |SHAP|", y="Feature", orientation="h",
-                              color="Mean |SHAP|", color_continuous_scale="Blues",
-                              title="Top 15 Features by Mean Impact")
-            fig_bar.update_layout(height=500, yaxis={"categoryorder": "total ascending"})
-            st.plotly_chart(fig_bar, use_container_width=True)
+    defaults = {
+        "Married/Single": "single", "House_Ownership": "rented", "Car_Ownership": "no",
+        "Profession": "Other", "CITY": "Unknown", "STATE": "Unknown",
+        "CURRENT_JOB_YRS": 0.0, "CURRENT_HOUSE_YRS": 0.0,
+    }
+    for col, value in defaults.items():
+        if col not in raw.columns:
+            raw[col] = value
+    raw["CURRENT_JOB_YRS"] = pd.to_numeric(raw["CURRENT_JOB_YRS"], errors="coerce").fillna(0)
+    raw["CURRENT_HOUSE_YRS"] = pd.to_numeric(raw["CURRENT_HOUSE_YRS"], errors="coerce").fillna(0)
+    for col in required:
+        raw[col] = pd.to_numeric(raw[col], errors="coerce")
+    bad = raw[required].isna().any(axis=1)
+    if bad.any():
+        raise ValueError(f"{int(bad.sum())} row(s) have missing or non-numeric Income, Age, or Experience values.")
 
-        st.caption("SHAP: Lundberg & Lee, NeurIPS 2017 — https://papers.nips.cc/paper/2017/hash/8a20a8621978632d76c43dfd28b67767-Abstract.html")
+    if "age_group" not in raw.columns:
+        raw["age_group"] = pd.cut(raw["Age"], [-np.inf, 0.3, 0.7, np.inf], labels=["Young", "Middle", "Senior"]).astype(str)
+    engineered = create_features(raw.copy())
+    missing_optional = [c for c in expected_cols if c not in engineered.columns]
+    for col in missing_optional:
+        engineered[col] = 0
+    X = engineered.reindex(columns=expected_cols).copy()
+    if len(X) > 500:
+        raise ValueError("Please provide at most 500 rows per scoring run.")
+    return X, raw, missing_optional
 
-    # ── TAB 2: Single Prediction (Waterfall) ──────────────────────────────────
-    with tabs[1]:
-        st.subheader("Single Prediction Explanation")
-        st.caption("Why did the model give this specific applicant their risk score?")
 
-        idx = st.slider("Select applicant index", 0, len(sample) - 1, 0, key="shap_idx")
+def decision_for(prob: float) -> str:
+    if prob < THRESHOLD_APPROVE:
+        return "Lower risk — eligible for policy review"
+    if prob < THRESHOLD_REVIEW:
+        return "Borderline — manual review"
+    return "Elevated risk — manual review required"
 
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore")
-            prob = float(traced_predict_proba(model, sample.iloc[[idx]], operation="explainability_sample")[0][1])
 
-        k1, k2, k3 = st.columns(3)
-        k1.metric("Risk Probability", f"{prob:.2%}")
-        k2.metric("Decision", "Approve" if prob < 0.3 else "Review" if prob < 0.6 else "Reject")
-        k3.metric("Base Rate", f"{float(explainer.expected_value[1] if isinstance(explainer.expected_value, list) else explainer.expected_value):.2%}")
+def explanation_for(prob: float, shap_row: np.ndarray, names: list[str]) -> tuple[str, str, str]:
+    order = np.argsort(np.abs(shap_row))[::-1]
+    drivers = []
+    for i in order:
+        if abs(float(shap_row[i])) < 1e-8:
+            continue
+        name = names[i].replace("num__", "").replace("cat__", "")
+        direction = "increased" if shap_row[i] > 0 else "reduced"
+        drivers.append(f"{name} {direction} the model score")
+        if len(drivers) == 3:
+            break
+    why = "; ".join(drivers) if drivers else "No material feature contribution was identified."
+    recommendation = decision_for(prob)
+    caveat = "SHAP describes model contributions, not causes or a complete creditworthiness assessment. Verify source data and apply approved policy before acting."
+    return why, recommendation, caveat
 
-        base_val = explainer.expected_value
-        if isinstance(base_val, (list, np.ndarray)):
-            base_val = float(base_val[1])
 
-        explanation = shap.Explanation(
-            values=sv[idx],
-            base_values=base_val,
-            data=X_dense[idx],
-            feature_names=feature_names
-        )
+st.markdown("""
+<style>
+.hero {padding:1.2rem 1.5rem;border-radius:16px;background:linear-gradient(115deg,#101a32,#17496b 62%,#16827e);color:#f7fbff}
+.hero h1{margin:0}.hero p{margin:.35rem 0 0;color:#d8e9f2}
+</style>
+<div class="hero"><h1>Explainability & Fairness</h1><p>Score current applicant records, inspect interactive SHAP drivers, and review every recommendation.</p></div>
+""", unsafe_allow_html=True)
+st.caption("Decision support prototype. Model recommendations are not lending decisions and require human review.")
 
-        col_wf, col_tbl = st.columns([3, 2])
-        with col_wf:
-            shap.plots.waterfall(explanation, show=False, max_display=15)
-            st.pyplot(plt.gcf())
-            plt.clf()
-
-        with col_tbl:
-            st.subheader("Top Feature Contributions")
-            shap_df = pd.DataFrame({
-                "Feature": [f.replace("num__","").replace("cat__","") for f in feature_names],
-                "SHAP Value": sv[idx],
-                "Direction": ["Increases Risk" if v > 0 else "Decreases Risk" for v in sv[idx]]
-            }).sort_values("SHAP Value", key=abs, ascending=False).head(12)
-            st.dataframe(
-                shap_df.style.format({"SHAP Value": "{:+.4f}"})
-                .map(lambda v: "color: red" if v == "Increases Risk" else "color: green",
-                     subset=["Direction"]),
-                use_container_width=True, hide_index=True
-            )
-
-    # ── TAB 3: Feature Dependence ──────────────────────────────────────────────
-    with tabs[2]:
-        st.subheader("Feature Dependence Plot")
-        st.caption("How does a feature's value affect its SHAP contribution across all applicants?")
-
-        num_features   = [f for f in feature_names if f.startswith("num__")]
-        display_names  = [f.replace("num__", "") for f in num_features]
-
-        d1, d2 = st.columns(2)
-        with d1:
-            selected = st.selectbox("Primary feature", display_names, key="dep_feat")
-        with d2:
-            color_feat = st.selectbox("Color by feature", ["Auto"] + display_names, key="dep_color")
-
-        feat_idx = feature_names.index(f"num__{selected}")
-        color_idx = "auto" if color_feat == "Auto" else feature_names.index(f"num__{color_feat}")
-
-        fig_dep, ax_dep = plt.subplots(figsize=(10, 5))
-        shap.dependence_plot(feat_idx, sv, X_dense, feature_names=feature_names,
-                             interaction_index=color_idx, ax=ax_dep, show=False)
-        st.pyplot(fig_dep)
-        plt.clf()
-
-    # ── TAB 4: Feature Interactions ────────────────────────────────────────────
-    with tabs[3]:
-        st.subheader("SHAP Feature Interaction Heatmap")
-        st.caption("Correlation between SHAP values — which features move together in their impact on risk.")
-
-        # Compute correlation of SHAP values across samples
-        shap_df_full = pd.DataFrame(sv, columns=feature_names)
-        # Keep only numeric features for readability
-        num_cols_shap = [c for c in shap_df_full.columns if c.startswith("num__")]
-        shap_corr = shap_df_full[num_cols_shap].corr()
-        shap_corr.columns = [c.replace("num__", "") for c in shap_corr.columns]
-        shap_corr.index   = [c.replace("num__", "") for c in shap_corr.index]
-
-        fig_heat = px.imshow(shap_corr, text_auto=".2f", color_continuous_scale="RdBu_r",
-                              zmin=-1, zmax=1, title="SHAP Value Correlation (Numeric Features)",
-                              aspect="auto")
-        fig_heat.update_layout(height=500)
-        st.plotly_chart(fig_heat, use_container_width=True)
-
-        st.caption("High positive correlation = features tend to increase/decrease risk together. "
-                   "Useful for detecting redundant features and multicollinearity.")
-
-        # SHAP distribution by decision
-        st.markdown("---")
-        st.subheader("SHAP Distribution by Decision")
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore")
-            all_probs = traced_predict_proba(model, sample, operation="explainability_distribution")[:, 1]
-        decisions = ["Approve" if p < 0.3 else "Review" if p < 0.6 else "Reject" for p in all_probs]
-
-        sel_feat_int = st.selectbox("Feature to compare", display_names, key="int_feat")
-        feat_idx_int = feature_names.index(f"num__{sel_feat_int}")
-        df_dist = pd.DataFrame({
-            "SHAP Value": sv[:, feat_idx_int],
-            "Decision": decisions
-        })
-        fig_dist = px.violin(df_dist, x="Decision", y="SHAP Value", color="Decision",
-                              color_discrete_map={"Approve": "green", "Review": "orange", "Reject": "red"},
-                              box=True, title=f"SHAP Distribution of {sel_feat_int} by Decision")
-        st.plotly_chart(fig_dist, use_container_width=True)
-
-    # ── TAB 5: Fairness Audit ──────────────────────────────────────────────────
-    with tabs[4]:
-        st.subheader("Fairness & Bias Audit")
-        st.caption("Model performance across demographic subgroups. Disparate Impact Ratio < 0.8 = potential bias (4/5ths rule).")
-
-        with st.spinner("Computing fairness metrics on holdout set..."):
-            df_fair = load_fairness_data()
-            metrics_df = subgroup_metrics(model, df_fair)
-
-        if not metrics_df.empty:
-            f1, f2 = st.columns(2)
-            with f1:
-                st.subheader("Subgroup Performance")
-                st.dataframe(
-                    metrics_df.style.format({
-                        "AUC": "{:.4f}", "F1": "{:.4f}",
-                        "approval_rate": "{:.2%}", "default_rate": "{:.2%}"
-                    }),
-                    use_container_width=True, hide_index=True
-                )
-
-            with f2:
-                fig_fair = px.bar(metrics_df, x="group_val", y="approval_rate",
-                                   color="group_col", barmode="group",
-                                   title="Approval Rate by Subgroup",
-                                   labels={"approval_rate": "Approval Rate", "group_val": "Group"})
-                fig_fair.add_hline(y=0.8, line_dash="dash", line_color="red",
-                                    annotation_text="80% fairness threshold")
-                st.plotly_chart(fig_fair, use_container_width=True)
-
-            st.markdown("---")
-            st.subheader("Disparate Impact Ratio (4/5ths Rule)")
-            dir_df = disparate_impact_ratio(metrics_df)
-            if not dir_df.empty:
-                def highlight_fair(val):
-                    return "background-color: #d4edda" if val == "Yes" else "background-color: #f8d7da"
-                st.dataframe(
-                    dir_df.style.map(highlight_fair, subset=["fair"]),
-                    use_container_width=True, hide_index=True
-                )
-
-            # AUC gap across groups
-            st.markdown("---")
-            st.subheader("AUC Gap Across Groups")
-            fig_auc = px.bar(metrics_df, x="group_val", y="AUC", color="group_col",
-                              barmode="group", title="ROC-AUC by Subgroup",
-                              labels={"AUC": "ROC-AUC", "group_val": "Group"})
-            fig_auc.add_hline(y=0.75, line_dash="dash", line_color="orange",
-                               annotation_text="Minimum acceptable AUC")
-            st.plotly_chart(fig_auc, use_container_width=True)
-
-            st.caption("Ref: ECOA (Equal Credit Opportunity Act) | Fair Housing Act | "
-                       "4/5ths Rule: EEOC Uniform Guidelines on Employee Selection Procedures")
+model = load_model()
+expected_cols = list(model.named_steps["preprocessor"].feature_names_in_)
+st.subheader("Choose applicant data")
+source = st.radio("Data source", ["Upload CSV", "Recent app predictions", "Live application endpoint"], horizontal=True)
+source_rows = pd.DataFrame()
+if source == "Upload CSV":
+    upload = st.file_uploader("Upload current applicant records", type=["csv"], help="Required columns: Income, Age, Experience. Values should use the trained model's normalized 0–1 scale. Optional demographic and stability fields improve attribution fidelity.")
+    template = pd.DataFrame([{"Income": 0.42, "Age": 0.31, "Experience": 0.18,
+                              "Married/Single": "single", "House_Ownership": "rented",
+                              "Car_Ownership": "no", "Profession": "Analyst", "CITY": "Mumbai",
+                              "STATE": "Maharashtra", "CURRENT_JOB_YRS": 0.2,
+                              "CURRENT_HOUSE_YRS": 0.3}])
+    st.download_button("Download CSV template", template.to_csv(index=False), "applicant_upload_template.csv", "text/csv")
+    if upload is not None:
+        try:
+            source_rows = pd.read_csv(upload)
+        except Exception as exc:
+            st.error(f"Could not read CSV: {exc}")
+elif source == "Recent app predictions":
+    if st.button("Refresh recent predictions", type="primary"):
+        st.rerun()
+    source_rows = recent_prediction_rows()
+    if source_rows.empty:
+        st.info("No live prediction records are available in this app instance yet. Make a prediction on the Model page or upload a CSV.")
+    else:
+        st.caption("Source: recent rows from this Streamlit instance's prediction log. Cloud instance storage may reset on restart.")
+else:
+    live_url = st.text_input("Live endpoint URL", value=configured_secret("CREDISENSE_LIVE_APPLICATIONS_URL"), placeholder="https://your-service/applications")
+    live_token = st.text_input("Bearer token (optional)", type="password", value=configured_secret("CREDISENSE_LIVE_APPLICATIONS_TOKEN"))
+    if st.button("Fetch live applications", type="primary"):
+        if not live_url:
+            st.warning("Set a URL or configure CREDISENSE_LIVE_APPLICATIONS_URL.")
         else:
-            st.warning("Could not compute fairness metrics.")
+            try:
+                st.session_state["live_applicant_rows"] = fetch_live_rows(live_url, live_token)
+                st.success(f"Fetched {len(st.session_state['live_applicant_rows'])} current application row(s).")
+            except Exception as exc:
+                st.error(f"Live fetch failed: {exc}")
+    source_rows = st.session_state.get("live_applicant_rows", pd.DataFrame())
 
-except Exception as e:
-    st.error(f"Error loading explainability: {e}")
+if not source_rows.empty:
+    st.markdown("#### Input preview")
+    st.dataframe(source_rows.head(8), use_container_width=True, hide_index=True)
+    if st.button("Score and explain all rows", type="primary", use_container_width=True):
+        try:
+            X, raw_rows, defaulted = prepare_features(source_rows, expected_cols)
+            with st.spinner("Scoring records and computing per-applicant SHAP explanations…"):
+                with warnings.catch_warnings():
+                    warnings.simplefilter("ignore")
+                    probs = traced_predict_proba(model, X, operation="explainability_batch")[:, 1]
+                _, shap_values, dense_values, feature_names = get_explainer_and_values(model, X)
+            results = []
+            for i, prob in enumerate(probs):
+                why, recommendation, caveat = explanation_for(float(prob), shap_values[i], feature_names)
+                applicant_id = raw_rows.iloc[i].get("application_id", raw_rows.iloc[i].get("Id", i + 1))
+                results.append({"Applicant": str(applicant_id), "Default probability": float(prob),
+                                "Recommendation": recommendation, "Reasoning (top SHAP drivers)": why,
+                                "Review note": caveat})
+            result_df = pd.DataFrame(results)
+            st.session_state["explainability_results"] = result_df
+            st.session_state["explainability_X"] = X
+            st.session_state["explainability_shap"] = shap_values
+            st.session_state["explainability_dense"] = dense_values
+            st.session_state["explainability_names"] = feature_names
+            st.session_state["explainability_source_rows"] = raw_rows
+            st.session_state["explainability_defaulted"] = defaulted
+        except Exception as exc:
+            st.error(f"Scoring could not be completed: {exc}")
+
+if "explainability_results" in st.session_state:
+    result_df = st.session_state["explainability_results"]
+    X = st.session_state["explainability_X"]
+    sv = st.session_state["explainability_shap"]
+    dense_values = st.session_state["explainability_dense"]
+    names = st.session_state["explainability_names"]
+    raw = st.session_state["explainability_source_rows"]
+    defaulted = st.session_state["explainability_defaulted"]
+    st.markdown("---")
+    st.subheader("Applicant predictions and reasoning")
+    if defaulted:
+        st.warning("Some optional inputs were absent and defaulted for scoring: " + ", ".join(defaulted) + ". The corresponding explanations may be less informative.")
+    m1, m2, m3 = st.columns(3)
+    m1.metric("Rows scored", len(result_df))
+    m2.metric("Average model probability", f"{result_df['Default probability'].mean():.1%}")
+    m3.metric("Manual review", int(result_df["Recommendation"].str.contains("manual review", case=False).sum()))
+    st.dataframe(result_df.style.format({"Default probability": "{:.2%}"}), use_container_width=True, hide_index=True)
+    st.download_button("Download scored rows and explanations", result_df.to_csv(index=False), "credisense_scored_explanations.csv", "text/csv")
+
+    risk_fig = px.histogram(result_df, x="Default probability", color="Recommendation", nbins=24,
+                            title="Current batch risk distribution", hover_data=["Applicant"], barmode="overlay")
+    risk_fig.update_layout(height=380, xaxis_tickformat=".0%")
+    st.plotly_chart(risk_fig, use_container_width=True)
+
+    st.subheader("Explore one applicant")
+    selected = st.selectbox("Applicant", result_df["Applicant"].tolist())
+    idx = result_df.index[result_df["Applicant"] == selected][0]
+    contributions = pd.DataFrame({"Feature": [n.replace("num__", "").replace("cat__", "") for n in names],
+                                  "SHAP contribution": sv[idx]}).sort_values("SHAP contribution", key=lambda s: s.abs()).tail(15)
+    contributions["Direction"] = np.where(contributions["SHAP contribution"] >= 0, "Raises model score", "Lowers model score")
+    driver_fig = px.bar(contributions, x="SHAP contribution", y="Feature", color="Direction", orientation="h",
+                        color_discrete_map={"Raises model score": "#d95f59", "Lowers model score": "#159a8c"},
+                        title=f"Top model contributions · applicant {selected}", hover_data={"SHAP contribution": ":.5f"})
+    driver_fig.add_vline(x=0, line_color="#667085")
+    driver_fig.update_layout(height=480, yaxis={"categoryorder": "total ascending"})
+    st.plotly_chart(driver_fig, use_container_width=True)
+    st.info(result_df.loc[idx, "Reasoning (top SHAP drivers)"] + "\n\nRecommendation: " + result_df.loc[idx, "Recommendation"] + ". " + result_df.loc[idx, "Review note"])
+
+    numeric_names = [n for n in names if n.startswith("num__")]
+    if len(numeric_names) > 1:
+        st.subheader("Batch feature interaction view")
+        selected_feature = st.selectbox("Feature for dependence view", numeric_names, format_func=lambda n: n.replace("num__", ""))
+        feature_index = names.index(selected_feature)
+        shap_column = f"SHAP · {selected_feature.replace('num__', '')}"
+        dependence = pd.DataFrame({"Feature value": dense_values[:, feature_index], shap_column: sv[:, feature_index],
+                                   "Applicant": result_df["Applicant"], "Default probability": result_df["Default probability"]})
+        fig_dep = px.scatter(dependence, x="Feature value", y=shap_column, color="Default probability",
+                             hover_name="Applicant", color_continuous_scale="RdYlGn_r",
+                             title="Feature value and its contribution across the current batch")
+        st.plotly_chart(fig_dep, use_container_width=True)
+
+    if "Risk_Flag" in raw.columns:
+        st.markdown("---")
+        st.subheader("Fairness screening (requires observed outcome labels)")
+        try:
+            fair_rows = create_features(raw.copy())
+            for col in expected_cols:
+                if col not in fair_rows.columns:
+                    fair_rows[col] = 0
+            metrics = subgroup_metrics(model, fair_rows, group_cols=[c for c in ["age_group", "House_Ownership", "Married/Single"] if c in fair_rows.columns])
+            if metrics.empty:
+                st.info("Not enough labelled records per subgroup to calculate screening metrics.")
+            else:
+                fair_fig = px.bar(metrics, x="group_val", y="approval_rate", color="group_col", barmode="group",
+                                  hover_data=["n", "AUC", "F1", "default_rate"], title="Observed-label approval rate by subgroup")
+                fair_fig.add_hline(y=0.8, line_dash="dash", line_color="red", annotation_text="Screening reference")
+                st.plotly_chart(fair_fig, use_container_width=True)
+                st.dataframe(disparate_impact_ratio(metrics), use_container_width=True, hide_index=True)
+                st.caption("Exploratory screening only; the 0.8 reference is not a legal determination or proof of fairness.")
+        except Exception as exc:
+            st.warning(f"Fairness screening unavailable: {exc}")

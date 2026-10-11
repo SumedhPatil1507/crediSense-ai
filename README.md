@@ -37,7 +37,7 @@ The image shows exploratory subgroup metrics for selected proxy attributes. Thes
 | Capability | Implementation |
 |---|---|
 | ML Model | LightGBM, hyperparameter tuning, class imbalance handling |
-| Explainability | SHAP beeswarm, waterfall, dependence, interaction heatmap, fairness audit |
+| Explainability | Interactive Plotly SHAP drivers and dependence views, per-applicant reasoning, and labelled subgroup screening |
 | AES-256 Encryption | Field-level encryption with PBKDF2 key derivation (cryptography library) |
 | PII Handling | Some masking and hashing helpers; full data lifecycle controls are not implemented |
 | Fairness Analysis | Exploratory subgroup metrics and disparate impact screening |
@@ -382,6 +382,10 @@ SMTP_PASS=<app-password>
 # RAG Copilot — LLM backend (optional — template fallback works without these)
 OPENAI_API_KEY=<key>                 # GPT-4o-mini (primary)
 GROQ_API_KEY=<key>                   # Llama-3.1-8B-instant (secondary)
+
+# Optional live application source for the Explainability page (GET JSON endpoint)
+CREDISENSE_LIVE_APPLICATIONS_URL=https://your-service/applications
+CREDISENSE_LIVE_APPLICATIONS_TOKEN=<bearer-token>
 ```
 
 ---
@@ -392,8 +396,14 @@ The multi-page Streamlit app entry point is `app/app.py`. The app-specific
 `app/requirements.txt` keeps Community Cloud's UI environment focused; it
 includes Plotly and the optional regulatory copilot stack, while backend-only
 Feast/Kafka/PostgreSQL and RAGAS dependencies remain in the root requirements.
-The app includes interactive Plotly charts on the Model, Explainability,
-Operations, Stress Testing, Logs, Compliance, and Feature Streaming pages. The
+The app uses Plotly for interactive charts throughout its dashboard. The
+Explainability page scores uploaded CSVs, recent predictions logged by the app,
+or records fetched from an optional live JSON endpoint. It computes a SHAP
+reason and a human-review recommendation for each scored row, and provides an
+upload template. CSVs require `Income`, `Age`, and `Experience` in the model's
+normalized 0–1 input scale. Optional columns such as `House_Ownership`,
+`Married/Single`, and tenure improve the explanation. The page can screen
+subgroup metrics only when an observed `Risk_Flag` label is present. The
 Feature Streaming page offers synthetic demo data when no feature history is
 available.
 

@@ -24,7 +24,7 @@ def subgroup_metrics(model, df: pd.DataFrame, target_col: str = "Risk_Flag",
 
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-    y_prob = traced_predict_proba(model, X, operation="fairness_analysis")[:, 1]
+        y_prob = traced_predict_proba(model, X, operation="fairness_analysis")[:, 1]
         y_pred = model.predict(X)
 
     rows = []

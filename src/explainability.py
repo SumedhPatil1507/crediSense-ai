@@ -19,7 +19,14 @@ def get_explainer_and_values(pipeline, X_df):
     explainer = shap.TreeExplainer(mod)
     shap_values = explainer.shap_values(X_transformed)
 
-    sv = shap_values[1] if isinstance(shap_values, list) else shap_values
+    # SHAP versions return either one array per class or an (rows, features,
+    # classes) array. Normalize both formats to the positive/default class.
+    if isinstance(shap_values, list):
+        sv = shap_values[1] if len(shap_values) > 1 else shap_values[0]
+    elif getattr(shap_values, "ndim", 0) == 3:
+        sv = shap_values[:, :, 1]
+    else:
+        sv = shap_values
 
     return explainer, sv, X_transformed, feature_names
 

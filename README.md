@@ -72,8 +72,9 @@ feature values, `event_timestamp`, and `created_timestamp`. Historical retrieval
 uses Feast `get_historical_features`, which joins only feature events visible at
 each entity timestamp. Retrieval enables `filter_by_created_timestamp=True`, so
 late-arriving corrections created after the application timestamp cannot leak
-into earlier training rows. The configured online store uses Redis at
-`localhost:6379` by default.
+into earlier training rows. In Docker Compose, containers reach Redis at
+`redis:6379`; host-side tools use `localhost:6380` to avoid conflicts with an
+existing local Redis service.
 
 The Streamlit **Feature Streaming** page (`8_Feature_Streaming.py`) provides
 interactive Plotly timelines and latest-value comparisons by applicant. It reads

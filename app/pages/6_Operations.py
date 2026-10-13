@@ -21,6 +21,8 @@ from src.database     import get_predictions
 from src.alerts       import alert, WEBHOOK_URL, ALERT_EMAIL
 
 st.set_page_config(layout="wide")
+from app.ui import configure_dashboard
+configure_dashboard()
 st.title("Operations Center")
 st.caption("HITL Queue | Drift Monitor | Shadow Mode | Model Registry | Alerts")
 

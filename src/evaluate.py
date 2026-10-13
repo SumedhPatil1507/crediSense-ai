@@ -5,11 +5,11 @@ from sklearn.metrics import (
 )
 from sklearn.calibration import calibration_curve
 import numpy as np
-from src.telemetry import traced_predict_proba
+from src.telemetry import traced_model_call, traced_predict_proba
 
 
 def evaluate(model, X_test, y_test):
-    y_pred = model.predict(X_test)
+    y_pred = traced_model_call(model, "predict", X_test, operation="evaluation_labels")
     y_prob = traced_predict_proba(model, X_test, operation="evaluation")[:, 1]
 
     auc = round(roc_auc_score(y_test, y_prob), 4)
@@ -73,7 +73,7 @@ def compare_models(models_dict, X_test, y_test):
     """
     rows = []
     for name, mdl in models_dict.items():
-        y_pred = mdl.predict(X_test)
+        y_pred = traced_model_call(mdl, "predict", X_test, operation="model_comparison_labels")
         y_prob = traced_predict_proba(mdl, X_test, operation="model_comparison")[:, 1]
         auc = round(roc_auc_score(y_test, y_prob), 4)
         rows.append({

@@ -6,6 +6,21 @@ import pytest
 
 feast = pytest.importorskip("feast")
 from feast import FeatureStore
+from feature_repo import features
+
+
+def test_feature_views_declare_expected_fields_and_entities():
+    """Credit and market views expose the intended point-in-time contract."""
+    assert features.rolling_credit_features.entity_names == ["applicant_id", "pan_hash"]
+    assert [field.name for field in features.rolling_credit_features.schema] == [
+        "rolling_credit_utilization"]
+    assert [field.name for field in features.payment_velocity_features.schema] == [
+        "payment_velocity"]
+    assert [field.name for field in features.debt_to_income_features.schema] == [
+        "debt_to_income_ratio"]
+    assert features.market_microstructure_features.entity_names == ["symbol"]
+    assert [field.name for field in features.market_technical_features.schema] == [
+        "return_1", "return_5", "realized_volatility_20", "rsi_14"]
 
 
 @pytest.mark.integration

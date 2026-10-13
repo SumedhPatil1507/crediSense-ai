@@ -1,12 +1,16 @@
 [theme]
-primaryColor = "#1f77b4"
-backgroundColor = "#ffffff"
-secondaryBackgroundColor = "#f0f2f6"
-textColor = "#262730"
+base = "dark"
+primaryColor = "#43d9c3"
+backgroundColor = "#0b1220"
+secondaryBackgroundColor = "#121d2e"
+textColor = "#e8f1fa"
+font = "sans serif"
+
+[browser]
+gatherUsageStats = false
 
 [server]
 maxUploadSize = 200
 
 [runner]
-# Force cache invalidation on redeploy
 magicEnabled = true

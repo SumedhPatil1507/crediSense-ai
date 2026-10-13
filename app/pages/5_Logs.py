@@ -11,6 +11,8 @@ sys.path.append(str(BASE_DIR))
 from src.database import get_predictions, get_feedback, get_audit, db_status
 
 st.set_page_config(layout="wide")
+from app.ui import configure_dashboard
+configure_dashboard()
 st.title("📋 Logs, Audit & Analytics")
 
 db = db_status()

@@ -11,6 +11,8 @@ from src.stress_test import run_macro_stress_test
 from src.live_data import get_macro_indicators
 
 st.set_page_config(layout="wide")
+from app.ui import configure_dashboard
+configure_dashboard()
 st.title("🌪️ Macroeconomic Stress Testing")
 st.markdown("Simulate portfolio-level shocks to evaluate model robustness and expected default rates.")
 

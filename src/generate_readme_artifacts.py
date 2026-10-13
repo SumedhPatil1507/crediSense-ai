@@ -9,7 +9,7 @@ Outputs:
 """
 import sys
 import warnings
-from src.telemetry import traced_predict_proba
+from src.telemetry import traced_predict_proba, traced_span
 from pathlib import Path
 
 import joblib
@@ -80,7 +80,9 @@ def generate_shap_beeswarm(model, X_test):
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         explainer = shap.TreeExplainer(mod)
-        sv = explainer.shap_values(X_t)
+        with traced_span("model.inference.shap", **{"model.operation": "artifact_generation",
+                                                     "model.name": type(mod).__name__}):
+            sv = explainer.shap_values(X_t)
     sv = sv[1] if isinstance(sv, list) else sv
 
     # Clean feature names for display

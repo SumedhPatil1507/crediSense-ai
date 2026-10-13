@@ -19,6 +19,7 @@ from torch import nn
 from torch.nn import functional as F
 from torch_geometric.data import HeteroData
 from torch_geometric.nn import HeteroConv, RGCNConv
+from src.telemetry import traced_span
 
 LOGGER = logging.getLogger(__name__)
 NODE_TYPES = ("applicant", "employer", "address", "phone_hash")
@@ -289,7 +290,9 @@ def train_model(
 def score_applicants(model: HeteroCreditRGCN, graph: CreditGraph) -> list[dict[str, Any]]:
     model.eval()
     with torch.no_grad():
-        outputs = model(graph.data)
+        with traced_span("model.inference", **{"model.operation": "gnn_applicant_scoring",
+                                                "model.name": type(model).__name__}):
+            outputs = model(graph.data)
         defaults = torch.sigmoid(outputs["default_logits"]).cpu().tolist()
         syndicate = torch.sigmoid(outputs["syndicate_logits"]).cpu().tolist()
         embeddings = outputs["embeddings"]["applicant"].cpu().tolist()

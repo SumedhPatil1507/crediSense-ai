@@ -6,7 +6,7 @@ Uses age_group and house_ownership as proxy attributes.
 import pandas as pd
 import numpy as np
 from sklearn.metrics import roc_auc_score, f1_score
-from src.telemetry import traced_predict_proba
+from src.telemetry import traced_model_call, traced_predict_proba
 
 
 def subgroup_metrics(model, df: pd.DataFrame, target_col: str = "Risk_Flag",
@@ -25,7 +25,7 @@ def subgroup_metrics(model, df: pd.DataFrame, target_col: str = "Risk_Flag",
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         y_prob = traced_predict_proba(model, X, operation="fairness_analysis")[:, 1]
-        y_pred = model.predict(X)
+        y_pred = traced_model_call(model, "predict", X, operation="fairness_labels")
 
     rows = []
     for col in group_cols:

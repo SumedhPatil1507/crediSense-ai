@@ -4,6 +4,7 @@ import hashlib
 import hmac
 import json
 import logging
+from math import isfinite
 import os
 import uuid
 from datetime import datetime, timezone
@@ -25,6 +26,7 @@ from src.streaming.metrics import (MESSAGES_PROCESSED, MESSAGES_DLQ,
 LOGGER = logging.getLogger(__name__)
 TOPIC = "credit.applications.v1"
 DEAD_LETTER_TOPIC = "credit.applications.v1.dlq"
+MARKET_TOPIC = os.getenv("MARKET_DATA_TOPIC", "market.orderbook.features.v1")
 _ACQUIRE_FEATURE_LOCK = """
 if redis.call('EXISTS', KEYS[2]) == 1 then return -1 end
 local latest = redis.call('HGET', KEYS[1], 'latest')
@@ -212,7 +214,153 @@ async def main() -> None:
     from prometheus_client import start_http_server
     start_http_server(int(os.getenv("STREAM_METRICS_PORT", "9108")),
                       addr=os.getenv("STREAM_METRICS_HOST", "0.0.0.0"))
-    await LoanApplicationConsumer().run()
+    mode = os.getenv("STREAMING_MODE", "applications").lower()
+    if mode == "market-consumer":
+        await MarketDataKafkaConsumer().run()
+    elif mode == "market-websocket":
+        await publish_provider_websocket()
+    elif mode == "applications":
+        await LoanApplicationConsumer().run()
+    else:
+        raise RuntimeError("STREAMING_MODE must be applications, market-consumer, or market-websocket")
+
+
+MARKET_FIELDS = {
+    "market_microstructure_features": (
+        "order_flow_imbalance", "vwap_slippage_bps", "bid_ask_spread_bps"),
+    "market_technical_features": (
+        "return_1", "return_5", "realized_volatility_20", "rsi_14"),
+}
+
+
+def validate_market_event(value: Any) -> dict[str, Any]:
+    """Validate the canonical, provider-neutral event published to Kafka.
+
+    Technical indicators must be calculated from completed bars with trailing
+    windows by the upstream market-data normalizer. This boundary deliberately
+    rejects incomplete events instead of filling features from future data.
+    """
+    if not isinstance(value, Mapping):
+        raise InvalidApplication("Market event must be a JSON object")
+    required = ("symbol", "event_timestamp", "created_timestamp", *(
+        name for names in MARKET_FIELDS.values() for name in names))
+    missing = [name for name in required if value.get(name) in (None, "")]
+    if missing:
+        raise InvalidApplication(f"Missing market fields: {', '.join(missing)}")
+    row = dict(value)
+    row["symbol"] = str(value["symbol"]).strip().upper()
+    if not row["symbol"]:
+        raise InvalidApplication("symbol must not be blank")
+    for name in required[1:3]:
+        try:
+            stamp = datetime.fromisoformat(str(value[name]).replace("Z", "+00:00"))
+            if stamp.tzinfo is None:
+                raise ValueError("timezone required")
+            row[name] = stamp.astimezone(timezone.utc).isoformat()
+        except (TypeError, ValueError) as exc:
+            raise InvalidApplication(f"{name} must be ISO-8601 with timezone") from exc
+    for names in MARKET_FIELDS.values():
+        for name in names:
+            try:
+                row[name] = float(value[name])
+            except (TypeError, ValueError) as exc:
+                raise InvalidApplication(f"{name} must be numeric") from exc
+            if not isfinite(row[name]):
+                raise InvalidApplication(f"{name} must be finite")
+    if not 0.0 <= row["rsi_14"] <= 100.0:
+        raise InvalidApplication("rsi_14 must be between 0 and 100")
+    return row
+
+
+class MarketDataKafkaConsumer:
+    """Consume normalized market features and update Feast after event-time checks.
+
+    The producer must retain the original provider timestamp and its own
+    ingestion timestamp. Offset commits happen only after all online writes.
+    """
+
+    def __init__(self, *, consumer: Any = None, feature_store: Any = None,
+                 topic: str = MARKET_TOPIC):
+        self.topic = topic
+        self.consumer = consumer or AIOKafkaConsumer(
+            topic,
+            bootstrap_servers=os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092"),
+            group_id=os.getenv("MARKET_KAFKA_GROUP_ID", "credisense-market-features"),
+            enable_auto_commit=False,
+            value_deserializer=lambda raw: json.loads(raw.decode("utf-8")),
+        )
+        self.feature_store = feature_store or FeatureStore(
+            repo_path=os.getenv("FEAST_REPO_PATH", str(Path(__file__).resolve().parents[2])))
+
+    async def process(self, value: Any) -> None:
+        row = validate_market_event(value)
+        # Feast's online API is synchronous; keep blocking IO off the event loop.
+        common = {key: row[key] for key in
+                  ("symbol", "event_timestamp", "created_timestamp")}
+        writes = [asyncio.to_thread(
+            self.feature_store.write_to_online_store, view_name,
+            pd.DataFrame([{**common, **{field: row[field] for field in fields}}]))
+            for view_name, fields in MARKET_FIELDS.items()]
+        results = await asyncio.gather(*writes, return_exceptions=True)
+        failures = [result for result in results if isinstance(result, Exception)]
+        if failures:
+            raise failures[0]
+
+    async def run(self) -> None:
+        await self.consumer.start()
+        try:
+            async for message in self.consumer:
+                await self.process(message.value)
+                partition = TopicPartition(message.topic, message.partition)
+                await self.consumer.commit({
+                    partition: OffsetAndMetadata(message.offset + 1, "")})
+        finally:
+            await self.consumer.stop()
+
+
+async def publish_provider_websocket() -> None:
+    """Bridge a configured provider WebSocket into the raw Kafka topic.
+
+    Supply MARKET_WS_URL, MARKET_WS_AUTH_MESSAGE and MARKET_WS_SUBSCRIBE_MESSAGE
+    as JSON strings for the provider/account. Feed-specific parsing and feature
+    construction belongs in an upstream normalizer; raw L2 payloads are kept
+    out of the Feast feature schema.
+    """
+    import websockets
+
+    url = os.getenv("MARKET_WS_URL")
+    if not url:
+        raise RuntimeError("Set MARKET_WS_URL to a licensed market-data WebSocket")
+    producer = AIOKafkaProducer(
+        bootstrap_servers=os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092"))
+    auth = os.getenv("MARKET_WS_AUTH_MESSAGE")
+    subscribe = os.getenv("MARKET_WS_SUBSCRIBE_MESSAGE")
+    if not subscribe:
+        raise RuntimeError("Set MARKET_WS_SUBSCRIBE_MESSAGE for the chosen provider")
+    await producer.start()
+    try:
+        async with websockets.connect(url, ping_interval=20, ping_timeout=20,
+                                      max_size=8 * 1024 * 1024) as socket:
+            if auth:
+                await socket.send(auth)
+            await socket.send(subscribe)
+            async for message in socket:
+                # Preserve wire messages for a separate normalizer, keyed by
+                # provider symbol when available. Never log credentials/data.
+                records = json.loads(message)
+                if not isinstance(records, list):
+                    records = [records]
+                for record in records:
+                    if not isinstance(record, Mapping):
+                        continue
+                    key = str(record.get("symbol", record.get("S", record.get("T", ""))))
+                    await producer.send_and_wait(
+                        os.getenv("MARKET_RAW_TOPIC", "market.provider.raw.v1"),
+                        json.dumps(record, separators=(",", ":")).encode("utf-8"),
+                        key=key.encode("utf-8") if key else None,
+                    )
+    finally:
+        await producer.stop()
 
 
 if __name__ == "__main__":

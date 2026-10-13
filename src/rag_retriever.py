@@ -21,7 +21,7 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-from src.telemetry import traced_span
+from src.telemetry import traced_model_call, traced_span
 
 # ── Data Structures ───────────────────────────────────────────────────────────
 
@@ -183,7 +183,8 @@ class RegulatoryRetriever:
         if ce_model is not None:
             pairs = [[query, doc] for doc in docs]
             try:
-                scores = ce_model.predict(pairs).tolist()
+                scores = traced_model_call(
+                    ce_model, "predict", pairs, operation="retrieval_reranking").tolist()
             except Exception as e:
                 logger.error("Cross-encoder scoring failed: %s", e)
                 # Fall back to bi-encoder distance (invert distance for sorting)

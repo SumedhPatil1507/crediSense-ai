@@ -4,7 +4,9 @@ BASE_DIR = Path(__file__).resolve().parents[1]
 sys.path.append(str(BASE_DIR))
 
 import streamlit as st
+from app.ui import configure_dashboard
 st.set_page_config(page_title="CrediSense AI", layout="wide", page_icon="💳")
+configure_dashboard()
 
 # ── Cached resource loaders — loaded once, shared across all pages ─────────────
 

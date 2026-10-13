@@ -8,7 +8,11 @@ the host application.
 from __future__ import annotations
 
 from contextlib import contextmanager
+import logging
+import os
 from typing import Any, Iterator
+
+LOGGER = logging.getLogger(__name__)
 
 try:
     from opentelemetry import trace
@@ -61,9 +65,59 @@ def traced_span(name: str, **attributes: Any) -> Iterator[Any]:
 
 
 def traced_predict_proba(model: Any, features: Any, *, operation: str = "predict") -> Any:
-    """Trace an inference call without recording feature values or identifiers."""
+    """Trace a probability inference without recording features or identifiers."""
+    return traced_model_call(model, "predict_proba", features, operation=operation)
+
+
+def traced_model_call(model: Any, method: str, features: Any, *,
+                      operation: str = "inference") -> Any:
+    """Trace a model method call without attaching input values or identifiers."""
+    if method.startswith("_") or not callable(getattr(model, method, None)):
+        raise ValueError(f"Unsupported model inference method: {method}")
     with traced_span(
-        "credit_risk.score",
-        **{"credit_risk.operation": operation, "credit_risk.model": type(model).__name__},
+        "model.inference",
+        **{"model.operation": operation, "model.name": type(model).__name__,
+           "model.method": method},
     ):
-        return model.predict_proba(features)
+        return getattr(model, method)(features)
+
+
+def configure_telemetry() -> bool:
+    """Install an SDK tracer provider and optional OTLP span exporter once.
+
+    The API works without the SDK. Set OTEL_EXPORTER_OTLP_ENDPOINT (or the
+    traces-specific endpoint) to export spans to a Collector/backend.
+    """
+    try:
+        from opentelemetry import trace
+        from opentelemetry.sdk.resources import SERVICE_NAME, Resource
+        from opentelemetry.sdk.trace import TracerProvider
+        from opentelemetry.sdk.trace.export import BatchSpanProcessor
+    except ImportError:
+        return False
+
+    current = trace.get_tracer_provider()
+    if isinstance(current, TracerProvider):
+        return True
+    resource = Resource.create({SERVICE_NAME: os.getenv("OTEL_SERVICE_NAME", "credisense-api")})
+    provider = TracerProvider(resource=resource)
+    endpoint = (os.getenv("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT") or
+                os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT"))
+    if endpoint:
+        protocol = (os.getenv("OTEL_EXPORTER_OTLP_TRACES_PROTOCOL") or
+                    os.getenv("OTEL_EXPORTER_OTLP_PROTOCOL", "http/protobuf")).lower()
+        try:
+            if protocol == "grpc":
+                from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
+            elif protocol == "http/protobuf":
+                from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
+            else:
+                raise ValueError("OTEL OTLP traces protocol must be grpc or http/protobuf")
+            provider.add_span_processor(BatchSpanProcessor(OTLPSpanExporter()))
+        except (ImportError, ValueError):
+            LOGGER.exception("OTLP trace exporter could not be configured")
+    trace.set_tracer_provider(provider)
+    return True
+
+
+configure_telemetry()

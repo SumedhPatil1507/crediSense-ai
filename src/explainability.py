@@ -1,5 +1,6 @@
 import shap
 import numpy as np
+from src.telemetry import traced_span
 
 
 def get_explainer_and_values(pipeline, X_df):
@@ -17,7 +18,9 @@ def get_explainer_and_values(pipeline, X_df):
     feature_names = pre.get_feature_names_out().tolist()
 
     explainer = shap.TreeExplainer(mod)
-    shap_values = explainer.shap_values(X_transformed)
+    with traced_span("model.inference.shap", **{"model.operation": "explainability",
+                                                 "model.name": type(mod).__name__}):
+        shap_values = explainer.shap_values(X_transformed)
 
     # SHAP versions return either one array per class or an (rows, features,
     # classes) array. Normalize both formats to the positive/default class.

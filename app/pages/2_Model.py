@@ -41,6 +41,8 @@ def normalize(income_lpa, age_years, exp_years):
             min(exp_years / 40.0, 1.0))
 
 st.set_page_config(layout="wide")
+from app.ui import configure_dashboard
+configure_dashboard()
 st.title("💳 Loan Risk Prediction")
 
 # Onboarding

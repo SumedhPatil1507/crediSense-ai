@@ -90,6 +90,8 @@ _STARTER_QUESTIONS = [
 # ── Page Layout ──────────────────────────────────────────────────────────────
 
 st.set_page_config(layout="wide")
+from app.ui import configure_dashboard
+configure_dashboard()
 st.title("AI Risk Assistant")
 
 tabs = st.tabs(["Risk Prediction", "Regulatory Copilot"])

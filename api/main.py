@@ -2,6 +2,7 @@
 CrediSense AI — FastAPI Backend
 Endpoints: /predict, /predict/batch, /explain, /feedback, /health, /metrics
 """
+import asyncio
 import json
 import os
 import warnings
@@ -12,7 +13,7 @@ from pathlib import Path
 from typing import Optional
 import joblib
 
-from fastapi import FastAPI, HTTPException, Depends, Header, Query
+from fastapi import FastAPI, HTTPException, Depends, Header, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field, field_validator
 
@@ -23,13 +24,17 @@ sys.path.append(str(BASE_DIR))
 from src.config import (MODEL_PATH, COLUMNS_PATH, API_SECRET_KEY, API_VERSION,
                          THRESHOLD_APPROVE, THRESHOLD_REVIEW, API_ALLOWED_ORIGINS)
 from src.confidence_intervals import bootstrap_ci, interpret_ci
+from src.conformal import calibrated_interval
 from src.adverse_action import generate_adverse_action
 from src.validation import hash_input
 from src.database import log_prediction, log_feedback, log_audit, db_status
 from src.hitl_queue import enqueue as hitl_enqueue
 from src.model_registry import get_active_version, get_current_model_hash
 from src.metrics_server import setup_metrics
-from src.telemetry import traced_predict_proba
+from src.telemetry import traced_predict_proba, traced_span
+from src.streaming.prediction_events import prediction_channel
+from redis.asyncio import Redis
+from sse_starlette.sse import EventSourceResponse
 
 # ── Load model ─────────────────────────────────────────────────────────────────
 model = joblib.load(MODEL_PATH)
@@ -140,6 +145,24 @@ def make_confidence(prob: float) -> str:
     return "Low"
 
 
+def standardized_risk_response(verdict: str, lower: float | None = None,
+                               upper: float | None = None) -> dict:
+    """Build the stable four-field risk decision contract used by score routes."""
+    interval = (f"; 90% conformal interval [{lower:.4f}, {upper:.4f}]"
+                if lower is not None and upper is not None else
+                "; 90% conformal interval unavailable")
+    return {
+        "verdict": verdict,
+        "reasoning": "LightGBM SHAP feature drivers" + interval,
+        "recommendation": "Dynamic Fraction Kelly position size + ATR stop-loss distance",
+        "next_steps": [
+            "Step 1: Submit order to Alpaca paper/live gateway",
+            "Step 2: Log trade execution to audit ledger",
+            "Step 3: Monitor PSI/CSI feature drift",
+        ],
+    }
+
+
 def score_credit_risk(input_frame, *, operation: str = "predict") -> float:
     """Run and trace the model score without attaching applicant feature values."""
     with warnings.catch_warnings():
@@ -164,6 +187,59 @@ def get_gnn_attribution(applicant_id: str | None) -> dict | None:
 @app.get("/health")
 def health():
     return {"status": "ok", "version": API_VERSION, "db": db_status()}
+
+
+@app.get(f"/api/{API_VERSION}/stream/predictions/{{symbol}}")
+async def stream_predictions(symbol: str, request: Request,
+                             _: str = Depends(verify_api_key)):
+    """Stream prediction events from Redis Pub/Sub as server-sent events."""
+    try:
+        channel = prediction_channel(symbol)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    redis_client = Redis.from_url(
+        os.getenv("REDIS_URL", "redis://localhost:6379/0"), decode_responses=True)
+    pubsub = redis_client.pubsub()
+    try:
+        await pubsub.subscribe(channel)
+    except Exception as exc:
+        await pubsub.aclose()
+        await redis_client.aclose()
+        LOGGER.exception("Redis prediction subscription failed")
+        raise HTTPException(status_code=503, detail="Prediction stream is unavailable") from exc
+
+    async def events():
+        try:
+            yield {"event": "ready", "data": json.dumps({"symbol": symbol.strip().upper()})}
+            while not await request.is_disconnected():
+                message = await pubsub.get_message(
+                    ignore_subscribe_messages=True, timeout=1.0)
+                if message and message.get("type") == "message":
+                    payload = message["data"]
+                    if not isinstance(payload, str):
+                        payload = json.dumps(payload, separators=(",", ":"))
+                    event_id = None
+                    try:
+                        decoded = json.loads(payload)
+                        if isinstance(decoded, dict) and decoded.get("event_id") is not None:
+                            event_id = str(decoded["event_id"])
+                    except (TypeError, ValueError):
+                        pass
+                    event = {"event": "prediction", "data": payload}
+                    if event_id:
+                        event["id"] = event_id
+                    yield event
+                else:
+                    await asyncio.sleep(0.1)
+        finally:
+            try:
+                await pubsub.unsubscribe(channel)
+            finally:
+                await pubsub.aclose()
+                await redis_client.aclose()
+
+    return EventSourceResponse(events(), ping=15, send_timeout=30,
+                               headers={"Cache-Control": "no-cache"})
 
 
 @app.get(f"/api/{API_VERSION}/features/events")
@@ -234,24 +310,8 @@ def predict(inp: ApplicantInput, _: str = Depends(verify_api_key)):
         model_ver  = active_ver["version_id"] if active_ver else API_VERSION
         model_hash = get_current_model_hash()
 
-        return {
-            "prediction_id": pred_id,
-            "risk_probability": round(prob, 4),
-            "safe_probability": round(1 - prob, 4),
-            "decision": decision,
-            "confidence": confidence,
-            "confidence_interval_95": {"lower": round(ci_lower, 4), "upper": round(ci_upper, 4)},
-            "adverse_action": adverse if adverse["required"] else None,
-            "model_version": model_ver,
-            "model_hash": model_hash,
-            "queued_for_review": hitl_queued,
-            "graph_risk_attribution": gnn_scores,
-            "risk_attribution_sources": [
-                *([{"source": "Heterogeneous R-GCN", "role": "primary_network_signal",
-                    **gnn_scores}] if gnn_scores else []),
-                {"source": "LightGBM", "role": "decision_probability", "score": round(prob, 4)},
-            ],
-        }
+        conformal_bounds = calibrated_interval(prob)
+        return standardized_risk_response(decision, *(conformal_bounds or (None, None)))
     except Exception:
         LOGGER.exception("Prediction request failed")
         raise HTTPException(status_code=500, detail="Prediction could not be completed")
@@ -271,17 +331,12 @@ def predict_batch(batch: BatchInput, _: str = Depends(verify_api_key)):
                 inc_n, age_n, exp_n, prob, 0.0, 0.0,
                 decision, make_confidence(prob), page="API_BATCH"
             )
-            results.append({
-                "prediction_id": pred_id,
-                "risk_probability": round(prob, 4),
-                "decision": decision,
-                "graph_risk_attribution": gnn_scores,
-                "error": None,
-            })
+            conformal_bounds = calibrated_interval(prob)
+            results.append(standardized_risk_response(
+                decision, *(conformal_bounds or (None, None))))
         except Exception:
             LOGGER.exception("Batch prediction failed for one applicant")
-            results.append({"prediction_id": None, "risk_probability": None,
-                             "decision": "Error", "error": "Prediction failed"})
+            results.append(standardized_risk_response("Error"))
     return {"count": len(results), "results": results}
 
 
@@ -297,7 +352,9 @@ def explain(inp: ApplicantInput, _: str = Depends(verify_api_key)):
             X = X.toarray()
         feature_names = pre.get_feature_names_out().tolist()
         explainer = shap.TreeExplainer(mod)
-        sv = explainer.shap_values(X)
+        with traced_span("model.inference.shap", **{"model.operation": "api_explain",
+                                                     "model.name": type(mod).__name__}):
+            sv = explainer.shap_values(X)
         shap_vals = sv[1][0] if isinstance(sv, list) else sv[0]
         top = sorted(
             [{"feature": feature_names[i], "shap_value": round(float(shap_vals[i]), 4)}

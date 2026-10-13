@@ -47,11 +47,11 @@ class TestPredict:
         r = client.post("/api/v1/predict", json=VALID_PAYLOAD, headers=HEADERS)
         assert r.status_code == 200
         data = r.json()
-        assert "risk_probability" in data
-        assert "decision" in data
-        assert "confidence" in data
-        assert "confidence_interval_95" in data
-        assert 0.0 <= data["risk_probability"] <= 1.0
+        assert set(data) == {"verdict", "reasoning", "recommendation", "next_steps"}
+        assert len(data["next_steps"]) == 3
+        assert set(data) == {"verdict", "reasoning", "recommendation", "next_steps"}
+        assert "LightGBM SHAP feature drivers" in data["reasoning"]
+        assert "90% conformal interval" in data["reasoning"]
 
     def test_predict_invalid_age(self):
         payload = {**VALID_PAYLOAD, "age_years": 15}
@@ -66,11 +66,11 @@ class TestPredict:
     def test_predict_returns_prediction_id(self):
         r = client.post("/api/v1/predict", json=VALID_PAYLOAD, headers=HEADERS)
         assert r.status_code == 200
-        assert "prediction_id" in r.json()
+        assert set(r.json()) == {"verdict", "reasoning", "recommendation", "next_steps"}
 
     def test_predict_decision_values(self):
         r = client.post("/api/v1/predict", json=VALID_PAYLOAD, headers=HEADERS)
-        assert r.json()["decision"] in ["Approve", "Manual Review", "Reject"]
+        assert r.json()["verdict"] in ["Approve", "Manual Review", "Reject"]
 
 
 class TestBatchPredict:
@@ -81,6 +81,8 @@ class TestBatchPredict:
         data = r.json()
         assert data["count"] == 2
         assert len(data["results"]) == 2
+        assert all(set(item) == {"verdict", "reasoning", "recommendation", "next_steps"}
+                   for item in data["results"])
 
     def test_batch_empty_list(self):
         r = client.post("/api/v1/predict/batch", json={"applicants": []}, headers=HEADERS)

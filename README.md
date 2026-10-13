@@ -62,6 +62,35 @@ The image shows exploratory subgroup metrics for selected proxy attributes. Thes
 | Point-in-Time Features | Feast feature views for utilization, payment velocity, and debt-to-income |
 | Streaming Ingestion | Kafka application consumer with PostgreSQL audit and Redis cache before offset commit |
 
+### Interactive Streamlit dashboard
+
+The dashboard is a multi-page Streamlit app with a consistent dark theme and
+interactive Plotly charts across model evaluation, explainability, stress
+testing, drift, operations, and feature history. Hover over points and bars for
+details, zoom or pan to inspect ranges, click legend entries to show or hide
+series, and use the chart toolbar to reset or export a view. The landing page
+includes system status and a dataset-label overview; the feature page supports
+local history, file uploads, and an optional authenticated live API source.
+
+Start it from the repository root:
+
+```bash
+python -m pip install -r app/requirements.txt
+python -m streamlit run app/app.py
+```
+
+Streamlit opens the dashboard at `http://localhost:8501`. The API is optional
+for the core UI; pages that use API-backed live data need their corresponding
+Streamlit secrets. See [Run Locally](#run-locally) and
+[Deploy to Streamlit Cloud](#deploy-to-streamlit-cloud) for setup details.
+
+Risk scoring API routes return the same four top-level fields: `verdict`,
+`reasoning`, `recommendation`, and `next_steps`. A single prediction includes
+90% conformal bounds in `reasoning` when a calibration artifact is available;
+otherwise it states that the bounds are unavailable. This response format is
+an API contract, not evidence that the model is validated for lending or
+investment decisions.
+
 ### Streaming and Feature Store
 
 The Feast repository is configured by `feature_store.yaml`; definitions live in
@@ -100,6 +129,39 @@ Redis timestamp guard keeps late feature events from regressing the online
 snapshot. Compose applies the Feast repository before starting the consumer.
 The root `features.py` shim is needed because Feast CLI discovers definitions
 from the configured repository root.
+
+Market Feast views are also defined for trailing technical indicators and book
+microstructure (`symbol` entity). They use `event_timestamp` for event-time
+joins and `created_timestamp` to exclude late arrivals. Set `STREAMING_MODE` to
+`market-consumer` to consume canonical feature events from
+`MARKET_DATA_TOPIC`; each event must include the eight fields in
+`src/streaming/kafka_consumer.py::MARKET_FIELDS` plus both timestamps. Set it to
+`market-websocket` to bridge a configured WebSocket into `MARKET_RAW_TOPIC`
+using `MARKET_WS_URL`, `MARKET_WS_AUTH_MESSAGE`, and
+`MARKET_WS_SUBSCRIBE_MESSAGE`. That bridge preserves provider messages; a
+provider-specific normalizer must compute the canonical features and publish
+them to `MARKET_DATA_TOPIC`. It must use trailing completed-bar windows and
+must preserve provider event time. Confirm the account's licensed feed supports
+the required depth: Polygon/Massive documents no stock L2 feed, and its older
+crypto L2 endpoint is deprecated; Alpaca's documented stock stream exposes
+trades, quotes, and bars, not L2 depth.
+
+### Prediction SSE and tracing
+
+Authenticated clients can subscribe to
+`GET /api/v1/stream/predictions/{symbol}` using the `X-API-Key` header. The API
+listens on Redis Pub/Sub channel `predictions:{SYMBOL}` and emits `prediction`
+SSE events. Prediction producers can publish through
+`src.streaming.prediction_events.publish_prediction(symbol, event)`. Keep event
+payloads free of applicant identifiers and raw features. Redis Pub/Sub is live
+delivery only; it does not replay events after a client disconnects. Native browser
+`EventSource` cannot set the API key header; use a trusted same-origin proxy or
+a fetch-based SSE client that can attach the header.
+
+Model inference, reranking, explanations, and simulated backtest order-cost
+execution create OpenTelemetry spans. Set `OTEL_EXPORTER_OTLP_ENDPOINT` and a
+Collector endpoint to export them; `OTEL_SERVICE_NAME` identifies the service.
+Without an endpoint, the SDK creates spans without exporting them.
 
 For the broader engineering workflow, see [the runbook](docs/RUNBOOK.md),
 [the data contract](docs/DATA_CONTRACT.md), and [the model card](docs/MODEL_CARD.md).

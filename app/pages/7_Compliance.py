@@ -18,6 +18,8 @@ from src.model_registry import registry_storage_info
 from src.metrics_server import metrics_status
 
 st.set_page_config(layout="wide")
+from app.ui import configure_dashboard
+configure_dashboard()
 st.title("Compliance & Security Center")
 st.caption("RBI IT Framework | DPDP Act 2023 | AES-256 Encryption | Credit Bureau | Prometheus")
 

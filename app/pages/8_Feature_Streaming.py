@@ -10,6 +10,8 @@ import requests
 import streamlit as st
 
 st.set_page_config(page_title="Feature Streaming | CrediSense AI", page_icon="📡", layout="wide")
+from app.ui import configure_dashboard
+configure_dashboard()
 
 ROOT = Path(__file__).resolve().parents[2]
 FEATURE_PATH = ROOT / "data" / "credit_feature_events.parquet"

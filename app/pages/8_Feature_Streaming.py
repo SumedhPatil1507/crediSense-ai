@@ -8,12 +8,15 @@ import pandas as pd
 import plotly.express as px
 import requests
 import streamlit as st
+import sys
 
 st.set_page_config(page_title="Feature Streaming | CrediSense AI", page_icon="📡", layout="wide")
-from app.ui import configure_dashboard
+ROOT = Path(__file__).resolve().parents[2]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+from src.dashboard_ui import configure_dashboard
 configure_dashboard()
 
-ROOT = Path(__file__).resolve().parents[2]
 FEATURE_PATH = ROOT / "data" / "credit_feature_events.parquet"
 FEATURES = ["rolling_credit_utilization", "payment_velocity", "debt_to_income_ratio"]
 REQUIRED = {"applicant_id", "event_timestamp", *FEATURES}

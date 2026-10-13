@@ -25,7 +25,7 @@ from src.fairness import disparate_impact_ratio, subgroup_metrics
 from src.telemetry import traced_predict_proba
 
 st.set_page_config(page_title="Explainability | CrediSense AI", page_icon="📊", layout="wide")
-from app.ui import configure_dashboard
+from src.dashboard_ui import configure_dashboard
 configure_dashboard()
 
 

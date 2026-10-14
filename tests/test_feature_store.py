@@ -23,6 +23,14 @@ def test_feature_views_declare_expected_fields_and_entities():
         "return_1", "return_5", "realized_volatility_20", "rsi_14"]
 
 
+def test_feature_sources_use_event_and_arrival_timestamps():
+    """Point-in-time joins account for both event time and late arrival."""
+    assert features.credit_source.timestamp_field == "event_timestamp"
+    assert features.credit_source.created_timestamp_column == "created_timestamp"
+    assert features.market_source.timestamp_field == "event_timestamp"
+    assert features.market_source.created_timestamp_column == "created_timestamp"
+
+
 @pytest.mark.integration
 def test_historical_features_are_point_in_time(tmp_path):
     """A later correction is unavailable to an earlier application snapshot."""

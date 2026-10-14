@@ -29,7 +29,7 @@ def almgren_chriss_impact_bps(
     *,
     model: str = "quadratic",
     coefficient_bps: float = 10.0,
-    volatility_bps: pd.Series | float = 100.0,
+    volatility_bps: pd.Series | float | None = 100.0,
     permanent_impact_coefficient_bps: float = 0.0,
 ) -> pd.Series:
     """Return temporary plus optional permanent market impact in basis points.
@@ -47,7 +47,14 @@ def almgren_chriss_impact_bps(
     if model == "quadratic":
         temporary = coefficient_bps * p.pow(2)
     elif model in ("square_root", "sqrt"):
+        if volatility_bps is None:
+            raise ValueError("volatility_bps is required for square-root impact")
         vol = volatility_bps if isinstance(volatility_bps, pd.Series) else float(volatility_bps)
+        if isinstance(vol, pd.Series):
+            if not np.isfinite(vol.to_numpy(dtype=float)).all() or (vol < 0).any():
+                raise ValueError("volatility_bps must contain finite non-negative values")
+        elif not np.isfinite(vol) or vol < 0:
+            raise ValueError("volatility_bps must be finite and non-negative")
         temporary = coefficient_bps * vol * np.sqrt(p)
     else:
         raise ValueError("impact_model must be 'quadratic' or 'square_root'")

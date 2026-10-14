@@ -148,9 +148,9 @@ def make_confidence(prob: float) -> str:
 def standardized_risk_response(verdict: str, lower: float | None = None,
                                upper: float | None = None) -> dict:
     """Build the stable four-field risk decision contract used by score routes."""
-    interval = (f"; 90% conformal interval [{lower:.4f}, {upper:.4f}]"
+    interval = (f"; Conformal Prediction 90% confidence interval bounds [{lower:.4f}, {upper:.4f}]"
                 if lower is not None and upper is not None else
-                "; 90% conformal interval unavailable")
+                "; Conformal Prediction 90% confidence interval bounds unavailable")
     return {
         "verdict": verdict,
         "reasoning": "LightGBM SHAP feature drivers" + interval,

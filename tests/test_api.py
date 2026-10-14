@@ -49,9 +49,15 @@ class TestPredict:
         data = r.json()
         assert set(data) == {"verdict", "reasoning", "recommendation", "next_steps"}
         assert len(data["next_steps"]) == 3
-        assert set(data) == {"verdict", "reasoning", "recommendation", "next_steps"}
         assert "LightGBM SHAP feature drivers" in data["reasoning"]
-        assert "90% conformal interval" in data["reasoning"]
+        assert "Conformal Prediction 90% confidence interval bounds" in data["reasoning"]
+        assert data["recommendation"] == (
+            "Dynamic Fraction Kelly position size + ATR stop-loss distance")
+        assert data["next_steps"] == [
+            "Step 1: Submit order to Alpaca paper/live gateway",
+            "Step 2: Log trade execution to audit ledger",
+            "Step 3: Monitor PSI/CSI feature drift",
+        ]
 
     def test_predict_invalid_age(self):
         payload = {**VALID_PAYLOAD, "age_years": 15}
